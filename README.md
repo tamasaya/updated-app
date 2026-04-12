@@ -22,6 +22,8 @@ $ npm run dev
 
 ### Build
 
+### !ATTENTION with admin privacy
+
 ```bash
 # For windows
 $ npm run build:win
