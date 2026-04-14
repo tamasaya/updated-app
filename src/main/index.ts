@@ -1,5 +1,6 @@
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
+import { spawn } from 'child_process'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 
@@ -72,3 +73,52 @@ app.on('window-all-closed', () => {
 
 // In this file you can include the rest of your app's specific main process
 // code. You can also put them in separate files and require them here.
+
+ipcMain.handle('run-predict', async () => {
+  return await new Promise((resolve) => {
+    const child = spawn(
+      'wsl.exe',
+      [
+        '--distribution',
+        'Ubuntu',
+        '/bin/bash',
+        '-lc',
+        'cd ~/projects/spectral-reconstruction-experimental && /home/user/miniforge3/condabin/mamba run -n night_2 python predict_image.py'
+      ],
+      {
+        windowsHide: true
+      }
+    )
+
+    let stdout = ''
+    let stderr = ''
+
+    child.stdout.on('data', (data) => {
+      stdout += Buffer.from(data).toString('utf8')
+    })
+
+    child.stderr.on('data', (data) => {
+      const textUtf8 = Buffer.from(data).toString('utf8')
+      const textUtf16 = Buffer.from(data).toString('utf16le')
+
+      stderr += textUtf8.includes('\u0000') ? textUtf16 : textUtf8
+    })
+
+    child.on('error', (error) => {
+      resolve({
+        ok: false,
+        stdout,
+        stderr: error.message
+      })
+    })
+
+    child.on('close', (code) => {
+      resolve({
+        ok: code === 0,
+        code,
+        stdout,
+        stderr
+      })
+    })
+  })
+})

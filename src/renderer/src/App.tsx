@@ -2,7 +2,16 @@ import Versions from './components/Versions'
 import electronLogo from './assets/electron.svg'
 
 function App(): React.JSX.Element {
-  const ipcHandle = (): void => window.electron.ipcRenderer.send('ping')
+  const result = (): void => window.api.ping()
+  console.log(result)
+
+  const callApi = async (): Promise<void> => {
+    console.log('start')
+    const result = await window.api.runPredict()
+
+    console.log(result)
+    console.log('end')
+  }
 
   return (
     <>
@@ -12,6 +21,7 @@ function App(): React.JSX.Element {
         Build an Electron app with <span className="react">React</span>
         &nbsp;and <span className="ts">TypeScript</span>
       </div>
+
       <p className="tip">
         Please try pressing <code>F12</code> to open the devTool
       </p>
@@ -22,7 +32,7 @@ function App(): React.JSX.Element {
           </a>
         </div>
         <div className="action">
-          <a target="_blank" rel="noreferrer" onClick={ipcHandle}>
+          <a target="_blank" rel="noreferrer" onClick={callApi}>
             Send IPC
           </a>
         </div>
