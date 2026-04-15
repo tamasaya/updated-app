@@ -2,7 +2,7 @@ import { createHashRouter, Navigate } from 'react-router-dom'
 import { routes } from '@/shared/config/routes'
 import { AppLayout } from '@/widgets/appLayout/ui/AppLayout'
 import { MeasureModule } from '@/pages/MeasureModule'
-import { ReconstructionModule } from '@/pages/ReconstructionModule/ui/ReconstructionModule'
+import { ReconstructionPage } from '@/pages/ReconstructionPage/ui/ReconstructionPage'
 
 export const router = createHashRouter([
   {
@@ -19,7 +19,7 @@ export const router = createHashRouter([
       },
       {
         path: routes.spectralReconstruction,
-        element: <ReconstructionModule />
+        element: <ReconstructionPage />
       }
     ]
   }
