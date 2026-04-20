@@ -8,6 +8,8 @@ An Electron application with React and TypeScript
 
 ## Project Setup
 
+    // "node-pty": "^1.1.0",
+
 ### Install
 
 ```bash

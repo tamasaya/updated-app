@@ -15,6 +15,34 @@ if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld('electron', electronAPI)
     contextBridge.exposeInMainWorld('api', api)
+
+    contextBridge.exposeInMainWorld('spotread', {
+      start: (payload: { argyllBinDir: string; instrumentPort: number }) =>
+        ipcRenderer.invoke('spotread:start', payload),
+      stop: () => ipcRenderer.invoke('spotread:stop'),
+      calibrate: () => ipcRenderer.invoke('spotread:calibrate'),
+      measure: () => ipcRenderer.invoke('spotread:measure'),
+      saveSpectrum: () => ipcRenderer.invoke('spotread:saveSpectrum'),
+      setReference: () => ipcRenderer.invoke('spotread:setReference'),
+
+      onState: (callback: (state: string) => void) => {
+        const listener = (_event: unknown, state: string) => callback(state)
+        ipcRenderer.on('spotread:state', listener)
+        return () => ipcRenderer.removeListener('spotread:state', listener)
+      },
+
+      onRaw: (callback: (chunk: string) => void) => {
+        const listener = (_event: unknown, chunk: string) => callback(chunk)
+        ipcRenderer.on('spotread:raw', listener)
+        return () => ipcRenderer.removeListener('spotread:raw', listener)
+      },
+
+      onMeasurement: (callback: (measurement: unknown) => void) => {
+        const listener = (_event: unknown, measurement: unknown) => callback(measurement)
+        ipcRenderer.on('spotread:measurement', listener)
+        return () => ipcRenderer.removeListener('spotread:measurement', listener)
+      }
+    })
   } catch (error) {
     console.error(error)
   }
