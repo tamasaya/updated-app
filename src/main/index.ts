@@ -158,7 +158,7 @@ ipcMain.handle('read-image-file', async (_event, filePath: string) => {
   }
 })
 
-ipcMain.handle('run-seaborn-chart', async (_event, npyPath: string) => {
+ipcMain.handle('run-seaborn-chart', async (_event, npyPath: string, options?: unknown) => {
   return await new Promise((resolve) => {
     const exePath = getChartWorkerExePath()
     const outputPath = path.join(app.getPath('temp'), `chart-${Date.now()}.png`)
@@ -171,7 +171,12 @@ ipcMain.handle('run-seaborn-chart', async (_event, npyPath: string) => {
       return
     }
 
-    const child = spawn(exePath, [npyPath, outputPath], {
+    const args = [npyPath, outputPath]
+    if (options !== undefined) {
+      args.push(JSON.stringify(options))
+    }
+
+    const child = spawn(exePath, args, {
       windowsHide: true
     })
 

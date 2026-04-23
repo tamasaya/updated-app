@@ -34,6 +34,12 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
     imageDataUrl
   } = usePixelViewer(npyPath)
 
+  const [chartUrl, setChartUrl] = useState<string | null>(null)
+  const [chartError, setChartError] = useState<string | null>(null)
+  const [selectedPoints, setSelectedPoints] = useState<Point[]>([])
+  const [selectedRegions, setSelectedRegions] = useState<Region[]>([])
+  const [showAverage, setShowAverage] = useState(true)
+
   const [pixelX, setPixelX] = useState('')
   const [pixelY, setPixelY] = useState('')
   const [regionX1, setRegionX1] = useState('')
@@ -197,6 +203,17 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
     event.currentTarget.setPointerCapture(event.pointerId)
 
     const point = getImageCoords(event)
+
+    // Handle Ctrl+click for multi-point selection
+    if (event.ctrlKey) {
+      setSelectedPoints((prev) => [...prev, point])
+      buildMultiSelectionChart([...selectedPoints, point], selectedRegions)
+      setIsDragging(false)
+      setDragStart(null)
+      setDragEnd(null)
+      return
+    }
+
     setIsDragging(true)
     setDragStart(point)
     setDragEnd(point)
@@ -227,17 +244,62 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
 
     if (dragStart.x === dragEnd.x && dragStart.y === dragEnd.y) {
       applyPixelSelection(dragEnd)
+      // Auto-build chart for single pixel
+      buildMultiSelectionChart([dragEnd], selectedRegions)
     } else {
-      applyRegionSelection({
+      const newRegion = {
         x1: dragStart.x,
         y1: dragStart.y,
         x2: dragEnd.x,
         y2: dragEnd.y
-      })
+      }
+      applyRegionSelection(newRegion)
+      // Auto-build chart for region
+      buildMultiSelectionChart(selectedPoints, [...selectedRegions, newRegion])
     }
 
     setDragStart(null)
     setDragEnd(null)
+  }
+
+  const buildMultiSelectionChart = async (points: Point[], regions: Region[]) => {
+    if (!npyPath || (points.length === 0 && regions.length === 0)) return
+
+    const options = {
+      type: 'multi-selection' as const,
+      points,
+      regions,
+      showAverage
+    }
+
+    const result = await window.reconstructionApi.runSeabornChart(npyPath, options)
+
+    if (!result?.ok || !result.outputPath) {
+      setChartError(result?.error ?? 'Не удалось построить график')
+      return
+    }
+
+    try {
+      const file = await window.reconstructionApi.readImageFile(result.outputPath)
+      setChartUrl(arrayBufferToPngDataUrl(file.bytes))
+      setChartError(null)
+    } catch (error) {
+      setChartError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const handleShowAverageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const checked = event.target.checked
+    setShowAverage(checked)
+    if (selectedPoints.length > 0 || selectedRegions.length > 0) {
+      buildMultiSelectionChart(selectedPoints, selectedRegions)
+    }
+  }
+
+  const handleClearSelection = () => {
+    setSelectedPoints([])
+    setSelectedRegions([])
+    setChartUrl(null)
   }
 
   const cancelDrag = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -248,6 +310,23 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
     setIsDragging(false)
     setDragStart(null)
     setDragEnd(null)
+  }
+
+  function arrayBufferToBase64(buffer: ArrayBuffer): string {
+    const bytes = new Uint8Array(buffer)
+    let binary = ''
+
+    const chunkSize = 0x8000
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize)
+      binary += String.fromCharCode(...chunk)
+    }
+
+    return btoa(binary)
+  }
+
+  function arrayBufferToPngDataUrl(buffer: ArrayBuffer): string {
+    return `data:image/png;base64,${arrayBufferToBase64(buffer)}`
   }
 
   const handleSetPixel = () => {
@@ -489,6 +568,62 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+          <h3 className="mb-3 text-sm font-medium text-zinc-800">Графики</h3>
+
+          <div className="mb-4 flex items-center gap-4">
+            <label className="flex items-center gap-2 text-sm text-zinc-700">
+              <input
+                type="checkbox"
+                checked={showAverage}
+                onChange={handleShowAverageChange}
+                className="rounded border-zinc-300"
+              />
+              Показывать усредненную линию
+            </label>
+            <button
+              onClick={handleClearSelection}
+              disabled={selectedPoints.length === 0 && selectedRegions.length === 0}
+              className="rounded-xl bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-400"
+            >
+              Очистить выбор
+            </button>
+          </div>
+
+          {(selectedPoints.length > 0 || selectedRegions.length > 0) && (
+            <div className="mb-4 text-xs text-zinc-600">
+              {selectedPoints.length > 0 && (
+                <div>Точки: {selectedPoints.map((p) => `(${p.x}, ${p.y})`).join(', ')}</div>
+              )}
+              {selectedRegions.length > 0 && (
+                <div>
+                  Области:{' '}
+                  {selectedRegions.map((r) => `(${r.x1}, ${r.y1})-(${r.x2}, ${r.y2})`).join(', ')}
+                </div>
+              )}
+            </div>
+          )}
+
+          {chartError && (
+            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {chartError}
+            </div>
+          )}
+
+          {chartUrl && (
+            <div className="rounded-xl border border-zinc-200 bg-white p-2">
+              <div className="mb-2 text-sm font-medium text-zinc-800">
+                Спектры выбранных точек и областей
+              </div>
+              <img
+                src={chartUrl}
+                alt="Multi-selection spectrum"
+                className="w-full rounded-xl border border-zinc-200"
+              />
             </div>
           )}
         </div>

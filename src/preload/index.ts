@@ -7,7 +7,8 @@ const reconstructionApi = {
   runPredict: () => ipcRenderer.invoke('run-predict'),
   pickNpyFile: () => ipcRenderer.invoke('pick-npy-file'),
   readNpyFile: (filePath: string) => ipcRenderer.invoke('read-npy-file', filePath),
-  runSeabornChart: (npyPath: string) => ipcRenderer.invoke('run-seaborn-chart', npyPath),
+  runSeabornChart: (npyPath: string, options?: unknown) =>
+    ipcRenderer.invoke('run-seaborn-chart', npyPath, options),
   readImageFile: (filePath: string) => ipcRenderer.invoke('read-image-file', filePath)
 }
 

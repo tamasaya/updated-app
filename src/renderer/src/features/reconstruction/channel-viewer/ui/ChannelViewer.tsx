@@ -1,4 +1,4 @@
-import { JSX, useEffect, useState } from 'react'
+import { JSX, useState } from 'react'
 import { useChannelViewer, RgbMode, Normalization, Contrast } from '../model/useChannelViewer'
 
 type Props = {
@@ -48,7 +48,9 @@ export function ChannelViewer({ npyPath }: Props): JSX.Element {
   const handleBuildChart = async () => {
     if (!npyPath) return
 
-    const result = await window.reconstructionApi.runSeabornChart(npyPath)
+    const result = await window.reconstructionApi.runSeabornChart(npyPath, {
+      type: 'global-average'
+    })
 
     if (!result?.ok || !result.outputPath) {
       setChartError(result?.error ?? 'Не удалось построить график')
@@ -240,21 +242,30 @@ export function ChannelViewer({ npyPath }: Props): JSX.Element {
           )}
         </div>
 
-        <div>
-          <button onClick={handleBuildChart}>Построить график</button>
+        <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+          <h3 className="text-sm font-medium text-zinc-800 mb-3">График</h3>
+          <p className="text-sm text-zinc-600 mb-3">Построить средний спектр по всему кубу</p>
+          <button
+            onClick={handleBuildChart}
+            className="rounded-xl bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-800"
+          >
+            Построить спектр
+          </button>
 
           {chartError && (
-            <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
               {chartError}
             </div>
           )}
 
           {chartDataUrl && (
-            <img
-              src={chartDataUrl}
-              alt="Seaborn chart"
-              className="max-w-full rounded-xl border border-zinc-200"
-            />
+            <div className="mt-3">
+              <img
+                src={chartDataUrl}
+                alt="Seaborn chart"
+                className="max-w-full rounded-xl border border-zinc-200"
+              />
+            </div>
           )}
         </div>
       </div>
