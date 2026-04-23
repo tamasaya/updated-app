@@ -1,5 +1,12 @@
-/* eslint-disable @typescript-eslint/ban-ts-comment */
 import { useState } from 'react'
+
+type RunPredictResult = {
+  ok: boolean
+  code?: number
+  stdout: string
+  stderr: string
+  outputPath: string | null
+}
 
 type RunPredictionState = {
   isLoading: boolean
@@ -11,8 +18,6 @@ type UseRunPredictionResult = RunPredictionState & {
   runPrediction: () => Promise<string | null>
 }
 
-const OUTPUT_PATH = 'C:\\Users\\User\\repo\\saved\\test_pred_hsi.npy'
-
 export function useRunPrediction(): UseRunPredictionResult {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -23,17 +28,18 @@ export function useRunPrediction(): UseRunPredictionResult {
     setError(null)
 
     try {
-      const result = await window.api.runPredict()
-      console.log('RESULT', result)
+      const result = (await window.reconstructionApi.runPredict()) as unknown as RunPredictResult
 
-      //@ts-ignore
       if (!result?.ok) {
-        //@ts-ignore
         throw new Error(result?.stderr || 'Не удалось выполнить реконструкцию')
       }
 
-      setOutputPath(OUTPUT_PATH)
-      return OUTPUT_PATH
+      if (!result.outputPath) {
+        throw new Error('Не получен путь к итоговому .npy файлу')
+      }
+
+      setOutputPath(result.outputPath)
+      return result.outputPath
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Неизвестная ошибка'
       setError(message)

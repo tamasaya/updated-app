@@ -5,11 +5,9 @@ import { ChannelViewer } from '@/features/reconstruction/channel-viewer'
 export function ReconstructionWorkspace(): JSX.Element {
   const [npyPath, setNpyPath] = useState<string | null>(null)
 
-  // const [npyPath, setNpyPath] = useState<string | null>(null)
-
-  const handlePickNpy = async () => {
+  const handlePickNpy = async (): Promise<void> => {
     try {
-      const selectedPath = await window.api.pickNpyFile()
+      const selectedPath = await window.reconstructionApi.pickNpyFile()
       if (!selectedPath) return
       setNpyPath(selectedPath)
     } catch (error) {

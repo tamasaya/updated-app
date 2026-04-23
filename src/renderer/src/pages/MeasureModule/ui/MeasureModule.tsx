@@ -1,3 +1,4 @@
+import Versions from '@/components/Versions'
 import { PageTitle } from '@/shared/ui/PageTitle/PageTitle'
 import { FC } from 'react'
 // import { FC, useEffect, useMemo, useRef, useState } from 'react'
@@ -216,7 +217,7 @@ export const MeasureModule: FC = () => {
         title="Spotread"
         subtitle="Измерение одной точки через X-Rite i1 Pro и ArgyllCMS"
       />
-
+      <Versions />
       {/* <div className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
         <div className="space-y-6">
           <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">

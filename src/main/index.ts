@@ -1,10 +1,9 @@
 import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
-import { join } from 'path'
+import { join, extname } from 'path'
 import { spawn } from 'child_process'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import fs from 'fs/promises'
-// import { registerSpotreadIpc } from './spotread'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -54,8 +53,6 @@ app.whenReady().then(() => {
 
   ipcMain.on('ping', () => console.log('pong'))
 
-  // registerSpotreadIpc(() => mainWindow)
-
   mainWindow = createWindow()
 
   app.on('activate', function () {
@@ -69,55 +66,6 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
-})
-
-ipcMain.handle('run-predict', async () => {
-  return await new Promise((resolve) => {
-    const child = spawn(
-      'wsl.exe',
-      [
-        '--distribution',
-        'Ubuntu',
-        '/bin/bash',
-        '-lc',
-        'cd ~/projects/spectral-reconstruction-experimental && /home/user/miniforge3/condabin/mamba run -n night_2 python predict_image.py'
-      ],
-      {
-        windowsHide: true
-      }
-    )
-
-    let stdout = ''
-    let stderr = ''
-
-    child.stdout.on('data', (data) => {
-      stdout += Buffer.from(data).toString('utf8')
-    })
-
-    child.stderr.on('data', (data) => {
-      const textUtf8 = Buffer.from(data).toString('utf8')
-      const textUtf16 = Buffer.from(data).toString('utf16le')
-
-      stderr += textUtf8.includes('\u0000') ? textUtf16 : textUtf8
-    })
-
-    child.on('error', (error) => {
-      resolve({
-        ok: false,
-        stdout,
-        stderr: error.message
-      })
-    })
-
-    child.on('close', (code) => {
-      resolve({
-        ok: code === 0,
-        code,
-        stdout,
-        stderr
-      })
-    })
-  })
 })
 
 ipcMain.handle('pick-npy-file', async () => {
@@ -135,4 +83,58 @@ ipcMain.handle('pick-npy-file', async () => {
   }
 
   return result.filePaths[0]
+})
+
+ipcMain.handle('read-npy-file', async (_event, filePath: string) => {
+  if (extname(filePath).toLowerCase() !== '.npy') {
+    throw new Error('Разрешены только .npy файлы')
+  }
+
+  const file = await fs.readFile(filePath)
+
+  return file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength)
+})
+
+ipcMain.handle('run-predict', async () => {
+  return await new Promise((resolve) => {
+    const child = spawn(
+      'wsl.exe',
+      [
+        '--distribution',
+        'Ubuntu',
+        '/bin/bash',
+        '-lc',
+        'cd ~/projects/spectral-reconstruction-experimental && /home/user/miniforge3/condabin/mamba run -n night_2 python predict_image.py'
+      ],
+      { windowsHide: true }
+    )
+
+    let stdout = ''
+    let stderr = ''
+
+    child.stdout.on('data', (data) => {
+      stdout += Buffer.from(data).toString('utf8')
+    })
+
+    child.stderr.on('data', (data) => {
+      const textUtf8 = Buffer.from(data).toString('utf8')
+      const textUtf16 = Buffer.from(data).toString('utf16le')
+      stderr += textUtf8.includes('\u0000') ? textUtf16 : textUtf8
+    })
+
+    child.on('error', (error) => {
+      resolve({ ok: false, stdout, stderr: error.message, outputPath: null })
+    })
+
+    child.on('close', (code) => {
+      const outputPath = 'C:\\Users\\User\\repo\\saved\\test_pred_hsi.npy'
+      resolve({
+        ok: code === 0,
+        code,
+        stdout,
+        stderr,
+        outputPath: code === 0 ? outputPath : null
+      })
+    })
+  })
 })

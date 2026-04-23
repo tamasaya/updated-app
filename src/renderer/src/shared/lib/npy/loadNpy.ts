@@ -17,7 +17,9 @@ export type SpectralCube = {
 
 export async function loadNpy(filePath: string): Promise<SpectralCube> {
   const npy = new npyjs()
-  const result = await npy.load(filePath)
+
+  const fileBuffer = await window.reconstructionApi.readNpyFile(filePath)
+  const result = await npy.load(fileBuffer)
 
   return {
     data: result.data as NpyTypedArray,
