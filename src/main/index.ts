@@ -1,8 +1,9 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join } from 'path'
 import { spawn } from 'child_process'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import fs from 'fs/promises'
 // import { registerSpotreadIpc } from './spotread'
 
 let mainWindow: BrowserWindow | null = null
@@ -117,4 +118,21 @@ ipcMain.handle('run-predict', async () => {
       })
     })
   })
+})
+
+ipcMain.handle('pick-npy-file', async () => {
+  const result = await dialog.showOpenDialog({
+    title: 'Выберите .npy файл',
+    properties: ['openFile'],
+    filters: [
+      { name: 'NumPy files', extensions: ['npy'] },
+      { name: 'All files', extensions: ['*'] }
+    ]
+  })
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return null
+  }
+
+  return result.filePaths[0]
 })

@@ -5,7 +5,9 @@ import { electronAPI } from '@electron-toolkit/preload'
 const api = {
   ping: () => ipcRenderer.send('ping'),
 
-  runPredict: () => ipcRenderer.invoke('run-predict')
+  runPredict: () => ipcRenderer.invoke('run-predict'),
+
+  pickNpyFile: () => ipcRenderer.invoke('pick-npy-file')
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

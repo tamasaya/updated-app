@@ -6,6 +6,7 @@ declare global {
     api: {
       ping: () => void
       runPredict: () => Promise<void>
+      pickNpyFile: () => Promise<string | null>
     }
   }
 }
