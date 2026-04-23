@@ -2,12 +2,33 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
+type ChartPoint = {
+  x: number
+  y: number
+}
+
+type ChartRegion = {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+}
+
+type ChartOptions = {
+  points: ChartPoint[]
+  regions: ChartRegion[]
+  showAverage: boolean
+  wavelengthStartNm?: number
+  wavelengthEndNm?: number
+  maxRegionLines?: number
+}
+
 const reconstructionApi = {
   ping: () => ipcRenderer.send('ping'),
   runPredict: () => ipcRenderer.invoke('run-predict'),
   pickNpyFile: () => ipcRenderer.invoke('pick-npy-file'),
   readNpyFile: (filePath: string) => ipcRenderer.invoke('read-npy-file', filePath),
-  runSeabornChart: (npyPath: string, options?: unknown) =>
+  runSeabornChart: (npyPath: string, options: ChartOptions) =>
     ipcRenderer.invoke('run-seaborn-chart', npyPath, options),
   readImageFile: (filePath: string) => ipcRenderer.invoke('read-image-file', filePath)
 }

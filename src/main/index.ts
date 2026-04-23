@@ -11,8 +11,8 @@ let mainWindow: BrowserWindow | null = null
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
-    width: 900,
-    height: 670,
+    width: 1200,
+    height: 820,
     show: false,
     autoHideMenuBar: true,
     ...(process.platform === 'linux' ? { icon } : {}),
@@ -93,7 +93,6 @@ ipcMain.handle('read-npy-file', async (_event, filePath: string) => {
   }
 
   const file = await fsp.readFile(filePath)
-
   return file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength)
 })
 
@@ -166,7 +165,8 @@ ipcMain.handle('run-seaborn-chart', async (_event, npyPath: string, options?: un
     if (!fs.existsSync(exePath)) {
       resolve({
         ok: false,
-        error: `Chart worker not found: ${exePath}`
+        error: `Chart worker not found: ${exePath}`,
+        outputPath: null
       })
       return
     }
@@ -196,7 +196,8 @@ ipcMain.handle('run-seaborn-chart', async (_event, npyPath: string, options?: un
         ok: false,
         error: error.message,
         stdout,
-        stderr
+        stderr,
+        outputPath: null
       })
     })
 
@@ -209,7 +210,8 @@ ipcMain.handle('run-seaborn-chart', async (_event, npyPath: string, options?: un
           ok: false,
           error: 'Invalid JSON from chart worker',
           stdout,
-          stderr
+          stderr,
+          outputPath: null
         })
       }
     })

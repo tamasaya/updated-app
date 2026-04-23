@@ -1,12 +1,5 @@
 import { ElectronAPI } from '@electron-toolkit/preload'
 
-export type ChartType =
-  | 'global-average'
-  | 'pixel'
-  | 'region-average'
-  | 'overlay'
-  | 'multi-selection'
-
 type ChartPoint = {
   x: number
   y: number
@@ -20,12 +13,12 @@ type ChartRegion = {
 }
 
 type ChartOptions = {
-  type: ChartType
-  point?: ChartPoint
-  region?: ChartRegion
-  points?: ChartPoint[]
-  regions?: ChartRegion[]
-  showAverage?: boolean
+  points: ChartPoint[]
+  regions: ChartRegion[]
+  showAverage: boolean
+  wavelengthStartNm?: number
+  wavelengthEndNm?: number
+  maxRegionLines?: number
 }
 
 declare global {
@@ -33,15 +26,21 @@ declare global {
     electron: ElectronAPI
     reconstructionApi: {
       ping: () => void
-      runPredict: () => Promise<void>
+      runPredict: () => Promise<{
+        ok: boolean
+        code?: number
+        stdout: string
+        stderr: string
+        outputPath: string | null
+      }>
       pickNpyFile: () => Promise<string | null>
       readNpyFile: (filePath: string) => Promise<ArrayBuffer>
       runSeabornChart: (
         npyPath: string,
-        options?: ChartOptions
+        options: ChartOptions
       ) => Promise<{
         ok: boolean
-        outputPath?: string
+        outputPath: string | null
         error?: string
         stdout?: string
         stderr?: string
@@ -50,3 +49,5 @@ declare global {
     }
   }
 }
+
+export {}
