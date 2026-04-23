@@ -51,6 +51,16 @@ def sample_region_coords(x1: int, y1: int, x2: int, y2: int, max_samples: int):
     return coords[:max_samples]
 
 
+def build_x_axis(channels: int, options: dict):
+    wavelength_start = options.get("wavelengthStartNm")
+    wavelength_end = options.get("wavelengthEndNm")
+
+    if wavelength_start is not None and wavelength_end is not None and wavelength_end > wavelength_start:
+        return np.linspace(float(wavelength_start), float(wavelength_end), channels), "Длина волны, нм"
+
+    return np.arange(channels), "Канал"
+
+
 def add_spectrum_records(records, x_axis, spectrum, selection_label, selection_type, series_id):
     for x_value, intensity in zip(x_axis, spectrum):
         records.append(
@@ -64,7 +74,7 @@ def add_spectrum_records(records, x_axis, spectrum, selection_label, selection_t
         )
 
 
-def build_dataframe(arr: np.ndarray, options: dict):
+def build_selection_dataframe(arr: np.ndarray, options: dict):
     if arr.ndim != 3:
         fail("Ожидается трехмерный спектральный куб H×W×C")
 
@@ -72,18 +82,10 @@ def build_dataframe(arr: np.ndarray, options: dict):
     points = options.get("points", []) or []
     regions = options.get("regions", []) or []
     max_region_lines = int(options.get("maxRegionLines", 64))
-    wavelength_start = options.get("wavelengthStartNm")
-    wavelength_end = options.get("wavelengthEndNm")
 
-    if wavelength_start is not None and wavelength_end is not None and wavelength_end > wavelength_start:
-        x_axis = np.linspace(float(wavelength_start), float(wavelength_end), channels)
-        x_label = "Длина волны, нм"
-    else:
-        x_axis = np.arange(channels)
-        x_label = "Канал"
+    x_axis, x_label = build_x_axis(channels, options)
 
     records = []
-    all_spectra = []
     selection_order = []
 
     for index, point in enumerate(points, start=1):
@@ -99,7 +101,6 @@ def build_dataframe(arr: np.ndarray, options: dict):
             selection_type="point",
             series_id=f"point-{index}",
         )
-        all_spectra.append(spectrum)
         selection_order.append(selection_label)
 
     for index, region in enumerate(regions, start=1):
@@ -108,16 +109,15 @@ def build_dataframe(arr: np.ndarray, options: dict):
         coords = sample_region_coords(x1, y1, x2, y2, max_region_lines)
 
         for sample_index, (x, y) in enumerate(coords, start=1):
-          spectrum = arr[y, x, :]
-          add_spectrum_records(
-              records=records,
-              x_axis=x_axis,
-              spectrum=spectrum,
-              selection_label=selection_label,
-              selection_type="region",
-              series_id=f"region-{index}-sample-{sample_index}",
-          )
-          all_spectra.append(spectrum)
+            spectrum = arr[y, x, :]
+            add_spectrum_records(
+                records=records,
+                x_axis=x_axis,
+                spectrum=spectrum,
+                selection_label=selection_label,
+                selection_type="region",
+                series_id=f"region-{index}-sample-{sample_index}",
+            )
 
         selection_order.append(selection_label)
 
@@ -128,9 +128,26 @@ def build_dataframe(arr: np.ndarray, options: dict):
     return df, x_label, selection_order
 
 
-def build_plot(df: pd.DataFrame, output_path: Path, options: dict, x_label: str, selection_order: list[str]):
-    show_average = bool(options.get("showAverage", True))
+def build_global_average_dataframe(arr: np.ndarray, options: dict):
+    if arr.ndim != 3:
+        fail("Ожидается трехмерный спектральный куб H×W×C")
 
+    _, _, channels = arr.shape
+    x_axis, x_label = build_x_axis(channels, options)
+
+    mean_spectrum = arr.mean(axis=(0, 1))
+
+    df = pd.DataFrame(
+        {
+            "x": x_axis.astype(float),
+            "intensity": mean_spectrum.astype(float),
+        }
+    )
+
+    return df, x_label
+
+
+def apply_theme():
     sns.set_theme(
         context="notebook",
         style="darkgrid",
@@ -148,6 +165,38 @@ def build_plot(df: pd.DataFrame, output_path: Path, options: dict, x_label: str,
             "text.color": "#f8fafc",
         },
     )
+
+
+def plot_global_average(df: pd.DataFrame, output_path: Path, x_label: str):
+    apply_theme()
+
+    fig, ax = plt.subplots(figsize=(11.8, 5.6), dpi=180)
+
+    sns.lineplot(
+        data=df,
+        x="x",
+        y="intensity",
+        color="#67e8f9",
+        linewidth=3.6,
+        ax=ax,
+    )
+
+    ax.set_title("Средний спектр по всему кубу", fontsize=14, fontweight="bold", pad=14)
+    ax.set_xlabel(x_label)
+    ax.set_ylabel("Интенсивность")
+    ax.margins(x=0.01)
+
+    sns.despine(ax=ax, top=True, right=True)
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_selection(df: pd.DataFrame, output_path: Path, options: dict, x_label: str, selection_order: list[str]):
+    show_average = bool(options.get("showAverage", True))
+
+    apply_theme()
 
     fig, ax = plt.subplots(figsize=(11.8, 6.2), dpi=180)
 
@@ -254,12 +303,18 @@ def main():
         fail(f"Файл не найден: {input_path}")
 
     arr = np.load(input_path)
-    df, x_label, selection_order = build_dataframe(arr, options)
+    chart_type = options.get("type", "selection")
 
-    if df is None or df.empty:
-        fail("Нет выбранных точек или областей для построения графика")
+    if chart_type == "global-average":
+        df, x_label = build_global_average_dataframe(arr, options)
+        plot_global_average(df, output_path, x_label)
+    else:
+        df, x_label, selection_order = build_selection_dataframe(arr, options)
 
-    build_plot(df, output_path, options, x_label, selection_order)
+        if df is None or df.empty:
+            fail("Нет выбранных точек или областей для построения графика")
+
+        plot_selection(df, output_path, options, x_label, selection_order)
 
     print(
         json.dumps(

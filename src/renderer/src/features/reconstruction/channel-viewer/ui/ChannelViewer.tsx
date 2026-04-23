@@ -5,6 +5,26 @@ type Props = {
   npyPath: string | null
 }
 
+const WAVELENGTH_START_NM = 400
+const WAVELENGTH_END_NM = 700
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+
+  const chunkSize = 0x8000
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize)
+    binary += String.fromCharCode(...chunk)
+  }
+
+  return btoa(binary)
+}
+
+function arrayBufferToPngDataUrl(buffer: ArrayBuffer): string {
+  return `data:image/png;base64,${arrayBufferToBase64(buffer)}`
+}
+
 export function ChannelViewer({ npyPath }: Props): JSX.Element {
   const {
     isLoading,
@@ -25,46 +45,39 @@ export function ChannelViewer({ npyPath }: Props): JSX.Element {
     rgbImageDataUrl
   } = useChannelViewer(npyPath)
 
-  function arrayBufferToBase64(buffer: ArrayBuffer): string {
-    const bytes = new Uint8Array(buffer)
-    let binary = ''
-
-    const chunkSize = 0x8000
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      const chunk = bytes.subarray(i, i + chunkSize)
-      binary += String.fromCharCode(...chunk)
-    }
-
-    return btoa(binary)
-  }
-
-  function arrayBufferToPngDataUrl(buffer: ArrayBuffer): string {
-    return `data:image/png;base64,${arrayBufferToBase64(buffer)}`
-  }
-
   const [chartDataUrl, setChartDataUrl] = useState<string | null>(null)
   const [chartError, setChartError] = useState<string | null>(null)
+  const [chartLoading, setChartLoading] = useState(false)
 
   const handleBuildChart = async () => {
     if (!npyPath) return
 
-    const result = await window.reconstructionApi.runSeabornChart(npyPath, {
-      type: 'global-average'
-    })
-
-    if (!result?.ok || !result.outputPath) {
-      setChartError(result?.error ?? 'Не удалось построить график')
-      return
-    }
+    setChartLoading(true)
+    setChartError(null)
 
     try {
+      const result = await window.reconstructionApi.runSeabornChart(npyPath, {
+        type: 'global-average',
+        wavelengthStartNm: WAVELENGTH_START_NM,
+        wavelengthEndNm: WAVELENGTH_END_NM
+      })
+
+      if (!result?.ok || !result.outputPath) {
+        setChartDataUrl(null)
+        setChartError(result?.error ?? 'Не удалось построить график')
+        return
+      }
+
       const file = await window.reconstructionApi.readImageFile(result.outputPath)
       const dataUrl = arrayBufferToPngDataUrl(file.bytes)
 
       setChartDataUrl(dataUrl)
       setChartError(null)
-    } catch (error) {
-      setChartError(error instanceof Error ? error.message : String(error))
+    } catch (nextError) {
+      setChartDataUrl(null)
+      setChartError(nextError instanceof Error ? nextError.message : String(nextError))
+    } finally {
+      setChartLoading(false)
     }
   }
 
@@ -91,52 +104,70 @@ export function ChannelViewer({ npyPath }: Props): JSX.Element {
   const [height, width, channels] = cube.shape
 
   return (
-    <div className="space-y-4">
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="flex gap-4">
-          <div className="rounded-xl w-full border border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-700">
-            <div>
-              Размер: {width} × {height}
+    <div className="space-y-5">
+      <div className="grid gap-4 xl:grid-cols-2">
+        <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+          <div className="grid gap-4 md:grid-cols-[220px_minmax(0,1fr)]">
+            <div className="rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-700">
+              <div>
+                Размер: {width} × {height}
+              </div>
+              <div>Каналов: {channels}</div>
+              <div>Текущий канал: {selectedChannel}</div>
             </div>
-            <div>Каналов: {channels}</div>
-            <div>Текущий канал: {selectedChannel}</div>
+
+            <div className="space-y-2">
+              <label htmlFor="channel-range" className="block text-sm font-medium text-zinc-800">
+                Индекс канала
+              </label>
+
+              <input
+                id="channel-range"
+                type="range"
+                min={0}
+                max={Math.max(channelCount - 1, 0)}
+                step={1}
+                value={selectedChannel}
+                onChange={(event) => setSelectedChannel(Number(event.target.value))}
+                className="w-full"
+              />
+
+              <input
+                type="number"
+                min={0}
+                max={Math.max(channelCount - 1, 0)}
+                value={selectedChannel}
+                onChange={(event) => setSelectedChannel(Number(event.target.value))}
+                className="w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+              />
+            </div>
           </div>
-          <div className="space-y-2 w-full">
-            <label htmlFor="channel-range" className="block text-sm font-medium text-zinc-800">
-              Индекс канала
-            </label>
 
-            <input
-              id="channel-range"
-              type="range"
-              min={0}
-              max={Math.max(channelCount - 1, 0)}
-              step={1}
-              value={selectedChannel}
-              onChange={(event) => setSelectedChannel(Number(event.target.value))}
-              className="w-full"
-            />
+          <div className="mt-4 overflow-hidden rounded-2xl border border-zinc-200 bg-white p-4">
+            <h3 className="mb-3 text-sm font-medium text-zinc-800">Спектральный канал</h3>
 
-            <input
-              type="number"
-              min={0}
-              max={Math.max(channelCount - 1, 0)}
-              value={selectedChannel}
-              onChange={(event) => setSelectedChannel(Number(event.target.value))}
-              className="w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm outline-none ring-0 focus:border-blue-500"
-            />
+            {imageDataUrl ? (
+              <img
+                src={imageDataUrl}
+                alt={`Канал ${selectedChannel}`}
+                className="max-h-[520px] w-full rounded-lg border border-zinc-200 bg-white object-contain"
+              />
+            ) : (
+              <div className="text-sm text-zinc-500">Не удалось построить карту интенсивности.</div>
+            )}
           </div>
         </div>
 
-        <div>
-          <h3 className="text-sm font-medium text-zinc-800 mb-3">Псевдо-RGB представление</h3>
-          <div className="space-y-3 mb-3">
+        <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+          <h3 className="mb-3 text-sm font-medium text-zinc-800">Псевдо-RGB представление</h3>
+
+          <div className="space-y-3">
             <div>
-              <label className="block text-sm font-medium text-zinc-800 mb-1">Режим</label>
+              <label className="mb-1 block text-sm font-medium text-zinc-800">Режим</label>
               <select
                 value={rgbMode}
                 onChange={(e) => setRgbMode(e.target.value as RgbMode)}
-                className="w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm outline-none ring-0 focus:border-blue-500"
+                className="w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
               >
                 <option value="standard">Стандартный (R≈650, G≈550, B≈450 нм)</option>
                 <option value="custom">Пользовательский выбор</option>
@@ -146,7 +177,7 @@ export function ChannelViewer({ npyPath }: Props): JSX.Element {
             {rgbMode === 'custom' && (
               <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label className="block text-xs text-zinc-600 mb-1">R канал</label>
+                  <label className="mb-1 block text-xs text-zinc-600">R канал</label>
                   <input
                     type="number"
                     min={0}
@@ -158,8 +189,9 @@ export function ChannelViewer({ npyPath }: Props): JSX.Element {
                     className="w-full rounded border border-zinc-300 px-2 py-1 text-sm"
                   />
                 </div>
+
                 <div>
-                  <label className="block text-xs text-zinc-600 mb-1">G канал</label>
+                  <label className="mb-1 block text-xs text-zinc-600">G канал</label>
                   <input
                     type="number"
                     min={0}
@@ -171,8 +203,9 @@ export function ChannelViewer({ npyPath }: Props): JSX.Element {
                     className="w-full rounded border border-zinc-300 px-2 py-1 text-sm"
                   />
                 </div>
+
                 <div>
-                  <label className="block text-xs text-zinc-600 mb-1">B канал</label>
+                  <label className="mb-1 block text-xs text-zinc-600">B канал</label>
                   <input
                     type="number"
                     min={0}
@@ -189,22 +222,23 @@ export function ChannelViewer({ npyPath }: Props): JSX.Element {
 
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="block text-sm font-medium text-zinc-800 mb-1">Нормализация</label>
+                <label className="mb-1 block text-sm font-medium text-zinc-800">Нормализация</label>
                 <select
                   value={normalization}
                   onChange={(e) => setNormalization(e.target.value as Normalization)}
-                  className="w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm outline-none ring-0 focus:border-blue-500"
+                  className="w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
                 >
                   <option value="auto">Авто</option>
                   <option value="fixed">Фиксированная</option>
                 </select>
               </div>
+
               <div>
-                <label className="block text-sm font-medium text-zinc-800 mb-1">Контраст</label>
+                <label className="mb-1 block text-sm font-medium text-zinc-800">Контраст</label>
                 <select
                   value={contrast}
                   onChange={(e) => setContrast(e.target.value as Contrast)}
-                  className="w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm outline-none ring-0 focus:border-blue-500"
+                  className="w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
                 >
                   <option value="none">Без усиления</option>
                   <option value="gamma">Гамма коррекция</option>
@@ -212,62 +246,56 @@ export function ChannelViewer({ npyPath }: Props): JSX.Element {
               </div>
             </div>
           </div>
+
+          <div className="mt-4 overflow-hidden rounded-2xl border border-zinc-200 bg-white p-4">
+            <h3 className="mb-3 text-sm font-medium text-zinc-800">Псевдо-RGB</h3>
+
+            {rgbImageDataUrl ? (
+              <img
+                src={rgbImageDataUrl}
+                alt="Псевдо-RGB"
+                className="max-h-[520px] w-full rounded-lg border border-zinc-200 bg-white object-contain"
+              />
+            ) : (
+              <div className="text-sm text-zinc-500">Не удалось построить RGB изображение.</div>
+            )}
+          </div>
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
-          <h3 className="text-sm font-medium text-zinc-800 mb-3">Спектральный канал</h3>
-          {imageDataUrl ? (
-            <img
-              src={imageDataUrl}
-              alt={`Канал ${selectedChannel}`}
-              className="max-h-130 rounded-lg border border-zinc-200 bg-white object-contain"
-            />
-          ) : (
-            <div className="text-sm text-zinc-500">Не удалось построить карту интенсивности.</div>
-          )}
-        </div>
+      <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-medium text-zinc-800">График среднего спектра</h3>
+            <p className="mt-1 text-sm text-zinc-600">Средний спектр по всему спектральному кубу</p>
+          </div>
 
-        <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
-          <h3 className="text-sm font-medium text-zinc-800 mb-3">Спектральный канал</h3>
-          {rgbImageDataUrl ? (
-            <img
-              src={rgbImageDataUrl}
-              alt="Псевдо-RGB"
-              className="max-h-130 rounded-lg border border-zinc-200 bg-white object-contain"
-            />
-          ) : (
-            <div className="text-sm text-zinc-500">Не удалось построить RGB изображение.</div>
-          )}
-        </div>
-
-        <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
-          <h3 className="text-sm font-medium text-zinc-800 mb-3">График</h3>
-          <p className="text-sm text-zinc-600 mb-3">Построить средний спектр по всему кубу</p>
           <button
             onClick={handleBuildChart}
-            className="rounded-xl bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-800"
+            disabled={chartLoading}
+            className="rounded-xl bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Построить спектр
+            {chartLoading ? 'Построение...' : 'Построить спектр'}
           </button>
-
-          {chartError && (
-            <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              {chartError}
-            </div>
-          )}
-
-          {chartDataUrl && (
-            <div className="mt-3">
-              <img
-                src={chartDataUrl}
-                alt="Seaborn chart"
-                className="max-w-full rounded-xl border border-zinc-200"
-              />
-            </div>
-          )}
         </div>
+
+        {chartError && (
+          <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {chartError}
+          </div>
+        )}
+
+        {chartDataUrl ? (
+          <img
+            src={chartDataUrl}
+            alt="Средний спектр по всему кубу"
+            className="block w-full rounded-xl border border-zinc-200 bg-white"
+          />
+        ) : (
+          <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-8 text-sm text-zinc-500">
+            Нажмите «Построить спектр», чтобы построить средний спектр по всему кубу.
+          </div>
+        )}
       </div>
     </div>
   )

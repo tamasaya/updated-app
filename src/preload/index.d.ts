@@ -12,7 +12,14 @@ type ChartRegion = {
   y2: number
 }
 
-type ChartOptions = {
+type GlobalAverageChartOptions = {
+  type: 'global-average'
+  wavelengthStartNm?: number
+  wavelengthEndNm?: number
+}
+
+type SelectionChartOptions = {
+  type?: 'selection'
   points: ChartPoint[]
   regions: ChartRegion[]
   showAverage: boolean
@@ -20,6 +27,8 @@ type ChartOptions = {
   wavelengthEndNm?: number
   maxRegionLines?: number
 }
+
+type ChartOptions = GlobalAverageChartOptions | SelectionChartOptions
 
 declare global {
   interface Window {
