@@ -1,4 +1,4 @@
-import { JSX } from 'react'
+import { JSX, useEffect, useState } from 'react'
 import { useChannelViewer, RgbMode, Normalization, Contrast } from '../model/useChannelViewer'
 
 type Props = {
@@ -24,6 +24,47 @@ export function ChannelViewer({ npyPath }: Props): JSX.Element {
     setContrast,
     rgbImageDataUrl
   } = useChannelViewer(npyPath)
+
+  function arrayBufferToBase64(buffer: ArrayBuffer): string {
+    const bytes = new Uint8Array(buffer)
+    let binary = ''
+
+    const chunkSize = 0x8000
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize)
+      binary += String.fromCharCode(...chunk)
+    }
+
+    return btoa(binary)
+  }
+
+  function arrayBufferToPngDataUrl(buffer: ArrayBuffer): string {
+    return `data:image/png;base64,${arrayBufferToBase64(buffer)}`
+  }
+
+  const [chartDataUrl, setChartDataUrl] = useState<string | null>(null)
+  const [chartError, setChartError] = useState<string | null>(null)
+
+  const handleBuildChart = async () => {
+    if (!npyPath) return
+
+    const result = await window.reconstructionApi.runSeabornChart(npyPath)
+
+    if (!result?.ok || !result.outputPath) {
+      setChartError(result?.error ?? 'Не удалось построить график')
+      return
+    }
+
+    try {
+      const file = await window.reconstructionApi.readImageFile(result.outputPath)
+      const dataUrl = arrayBufferToPngDataUrl(file.bytes)
+
+      setChartDataUrl(dataUrl)
+      setChartError(null)
+    } catch (error) {
+      setChartError(error instanceof Error ? error.message : String(error))
+    }
+  }
 
   if (!npyPath) {
     return <div className="text-sm text-zinc-500">Сначала запустите реконструкцию.</div>
@@ -196,6 +237,24 @@ export function ChannelViewer({ npyPath }: Props): JSX.Element {
             />
           ) : (
             <div className="text-sm text-zinc-500">Не удалось построить RGB изображение.</div>
+          )}
+        </div>
+
+        <div>
+          <button onClick={handleBuildChart}>Построить график</button>
+
+          {chartError && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {chartError}
+            </div>
+          )}
+
+          {chartDataUrl && (
+            <img
+              src={chartDataUrl}
+              alt="Seaborn chart"
+              className="max-w-full rounded-xl border border-zinc-200"
+            />
           )}
         </div>
       </div>

@@ -3,7 +3,9 @@ import { join, extname } from 'path'
 import { spawn } from 'child_process'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import fs from 'fs/promises'
+import fsp from 'fs/promises'
+import fs from 'node:fs'
+import path from 'node:path'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -90,7 +92,7 @@ ipcMain.handle('read-npy-file', async (_event, filePath: string) => {
     throw new Error('Разрешены только .npy файлы')
   }
 
-  const file = await fs.readFile(filePath)
+  const file = await fsp.readFile(filePath)
 
   return file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength)
 })
@@ -135,6 +137,76 @@ ipcMain.handle('run-predict', async () => {
         stderr,
         outputPath: code === 0 ? outputPath : null
       })
+    })
+  })
+})
+
+function getChartWorkerExePath(): string {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'python', 'chart-worker', 'chart-worker.exe')
+  }
+
+  return path.join(process.cwd(), 'python-helper', 'dist', 'chart-worker', 'chart-worker.exe')
+}
+
+ipcMain.handle('read-image-file', async (_event, filePath: string) => {
+  const buffer = fs.readFileSync(filePath)
+
+  return {
+    filePath,
+    bytes: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+  }
+})
+
+ipcMain.handle('run-seaborn-chart', async (_event, npyPath: string) => {
+  return await new Promise((resolve) => {
+    const exePath = getChartWorkerExePath()
+    const outputPath = path.join(app.getPath('temp'), `chart-${Date.now()}.png`)
+
+    if (!fs.existsSync(exePath)) {
+      resolve({
+        ok: false,
+        error: `Chart worker not found: ${exePath}`
+      })
+      return
+    }
+
+    const child = spawn(exePath, [npyPath, outputPath], {
+      windowsHide: true
+    })
+
+    let stdout = ''
+    let stderr = ''
+
+    child.stdout.on('data', (data) => {
+      stdout += data.toString('utf8')
+    })
+
+    child.stderr.on('data', (data) => {
+      stderr += data.toString('utf8')
+    })
+
+    child.on('error', (error) => {
+      resolve({
+        ok: false,
+        error: error.message,
+        stdout,
+        stderr
+      })
+    })
+
+    child.on('close', () => {
+      try {
+        const parsed = JSON.parse(stdout.trim())
+        resolve(parsed)
+      } catch {
+        resolve({
+          ok: false,
+          error: 'Invalid JSON from chart worker',
+          stdout,
+          stderr
+        })
+      }
     })
   })
 })

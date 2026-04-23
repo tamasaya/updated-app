@@ -6,7 +6,9 @@ const reconstructionApi = {
   ping: () => ipcRenderer.send('ping'),
   runPredict: () => ipcRenderer.invoke('run-predict'),
   pickNpyFile: () => ipcRenderer.invoke('pick-npy-file'),
-  readNpyFile: (filePath: string) => ipcRenderer.invoke('read-npy-file', filePath)
+  readNpyFile: (filePath: string) => ipcRenderer.invoke('read-npy-file', filePath),
+  runSeabornChart: (npyPath: string) => ipcRenderer.invoke('run-seaborn-chart', npyPath),
+  readImageFile: (filePath: string) => ipcRenderer.invoke('read-image-file', filePath)
 }
 
 if (process.contextIsolated) {
