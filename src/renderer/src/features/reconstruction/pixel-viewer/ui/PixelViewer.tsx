@@ -1,7 +1,6 @@
 import { JSX, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CartesianGrid,
-  Legend,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -37,12 +36,19 @@ type DraftSelection = {
   additive: boolean
 } | null
 
+type SeriesKind = 'point' | 'region-sample' | 'region-mean' | 'global-mean'
+
 type Series = {
   id: string
   label: string
   color: string
   values: number[]
-  strokeWidth?: number
+  kind: SeriesKind
+  strokeWidth: number
+  strokeOpacity: number
+  showInTooltip: boolean
+  showInLegend: boolean
+  strokeDasharray?: string
 }
 
 const REGION_THRESHOLD = 3
@@ -70,6 +76,38 @@ function buildWavelengths(channelCount: number): number[] {
     const ratio = index / (channelCount - 1)
     return WAVELENGTH_START_NM + ratio * (WAVELENGTH_END_NM - WAVELENGTH_START_NM)
   })
+}
+
+function getRegionMeanSpectrum(
+  cube: NonNullable<ReturnType<typeof usePixelViewer>['cube']>,
+  region: Region
+): number[] {
+  const [, width, channels] = cube.shape
+  const sums = new Array(channels).fill(0)
+
+  let count = 0
+
+  for (let y = region.y1; y <= region.y2; y += 1) {
+    for (let x = region.x1; x <= region.x2; x += 1) {
+      const offset = (y * width + x) * channels
+
+      for (let c = 0; c < channels; c += 1) {
+        sums[c] += Number(cube.data[offset + c])
+      }
+
+      count += 1
+    }
+  }
+
+  if (count === 0) {
+    return new Array(channels).fill(0)
+  }
+
+  for (let c = 0; c < channels; c += 1) {
+    sums[c] /= count
+  }
+
+  return sums
 }
 
 function getSpectrumAtPoint(
@@ -137,6 +175,44 @@ function buildChartRows(wavelengths: number[], series: Series[]) {
   })
 }
 
+const POINT_COLORS = ['#0ea5e9', '#f97316', '#ef4444', '#14b8a6', '#eab308']
+const REGION_COLORS = ['#22c55e', '#a855f7', '#ec4899', '#84cc16', '#06b6d4']
+const GLOBAL_MEAN_COLOR = '#111827'
+
+function hexToRgb(hex: string) {
+  const clean = hex.replace('#', '')
+  const full =
+    clean.length === 3
+      ? clean
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : clean
+
+  const value = Number.parseInt(full, 16)
+
+  return {
+    r: (value >> 16) & 255,
+    g: (value >> 8) & 255,
+    b: value & 255
+  }
+}
+
+function mixWithWhite(hex: string, amount: number): string {
+  const { r, g, b } = hexToRgb(hex)
+
+  const mixedR = Math.round(r + (255 - r) * amount)
+  const mixedG = Math.round(g + (255 - g) * amount)
+  const mixedB = Math.round(b + (255 - b) * amount)
+
+  return `rgb(${mixedR}, ${mixedG}, ${mixedB})`
+}
+
+function withAlpha(hex: string, alpha: number): string {
+  const { r, g, b } = hexToRgb(hex)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
 export function PixelViewer({ npyPath }: Props): JSX.Element {
   const {
     isLoading,
@@ -202,12 +278,12 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
       ...points.map((point, index) => ({
         id: point.id,
         label: `Точка ${index + 1} (${point.x}, ${point.y})`,
-        color: OVERLAY_COLORS[index % OVERLAY_COLORS.length]
+        color: POINT_COLORS[index % POINT_COLORS.length]
       })),
       ...regions.map((region, index) => ({
         id: region.id,
         label: `Область ${index + 1} (${region.x1},${region.y1})–(${region.x2},${region.y2})`,
-        color: OVERLAY_COLORS[(points.length + index) % OVERLAY_COLORS.length]
+        color: REGION_COLORS[index % REGION_COLORS.length]
       }))
     ]
   }, [points, regions])
@@ -324,39 +400,81 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
     }
 
     const wavelengths = buildWavelengths(channels)
-    const pointSeries: Series[] = points.map((point, index) => ({
-      id: point.id,
-      label: `Точка ${index + 1}`,
-      color: OVERLAY_COLORS[index % OVERLAY_COLORS.length],
-      values: getSpectrumAtPoint(cube, point.x, point.y)
-    }))
 
-    const regionSeries: Series[] = regions.flatMap((region, regionIndex) => {
+    const pointSeries: Series[] = points.map((point, index) => {
+      const baseColor = POINT_COLORS[index % POINT_COLORS.length]
+
+      return {
+        id: point.id,
+        label: `Точка ${index + 1} (${point.x}, ${point.y})`,
+        color: baseColor,
+        values: getSpectrumAtPoint(cube, point.x, point.y),
+        kind: 'point',
+        strokeWidth: 1.5,
+        strokeOpacity: 0.95,
+        showInTooltip: true,
+        showInLegend: false
+      }
+    })
+
+    const regionSampleSeries: Series[] = regions.flatMap((region, regionIndex) => {
       const sampledPoints = sampleRegionPoints(region, MAX_REGION_LINES)
+      const baseColor = REGION_COLORS[regionIndex % REGION_COLORS.length]
+      const sampleColor = mixWithWhite(baseColor, 0.45)
+
       return sampledPoints.map((point, pointIndex) => ({
-        id: `${region.id}-${pointIndex}`,
+        id: `${region.id}-sample-${pointIndex}`,
         label: `Область ${regionIndex + 1} · P${pointIndex + 1}`,
-        color: OVERLAY_COLORS[(points.length + regionIndex) % OVERLAY_COLORS.length],
-        values: getSpectrumAtPoint(cube, point.x, point.y)
+        color: sampleColor,
+        values: getSpectrumAtPoint(cube, point.x, point.y),
+        kind: 'region-sample' as const,
+        strokeWidth: 1,
+        strokeOpacity: 0.7,
+        showInTooltip: false,
+        showInLegend: false
       }))
     })
 
-    const baseSeries = [...pointSeries, ...regionSeries]
-    const meanValues = averageSpectra(baseSeries.map((item) => item.values))
+    const regionMeanSeries: Series[] = regions.map((region, regionIndex) => {
+      const baseColor = REGION_COLORS[regionIndex % REGION_COLORS.length]
 
-    const allSeries =
-      averageMode === 'show'
-        ? [
-            ...baseSeries,
-            {
-              id: 'average',
-              label: 'Средняя',
-              color: AVERAGE_COLOR,
-              values: meanValues,
-              strokeWidth: 3
-            }
-          ]
-        : baseSeries
+      return {
+        id: `${region.id}-mean`,
+        label: `Средняя области ${regionIndex + 1}`,
+        color: baseColor,
+        values: getRegionMeanSpectrum(cube, region),
+        kind: 'region-mean',
+        strokeWidth: 3,
+        strokeOpacity: 1,
+        showInTooltip: true,
+        showInLegend: true
+      }
+    })
+
+    const shouldShowGlobalMean = averageMode === 'show' && points.length > 0 && regions.length === 0
+
+    const globalMeanSeries: Series[] = shouldShowGlobalMean
+      ? [
+          {
+            id: 'global-mean',
+            label: 'Средняя всех точек',
+            color: GLOBAL_MEAN_COLOR,
+            values: averageSpectra(pointSeries.map((item) => item.values)),
+            kind: 'global-mean',
+            strokeWidth: 3,
+            strokeOpacity: 1,
+            showInTooltip: true,
+            showInLegend: true
+          }
+        ]
+      : []
+
+    const allSeries = [
+      ...pointSeries,
+      ...regionSampleSeries,
+      ...regionMeanSeries,
+      ...globalMeanSeries
+    ]
 
     return {
       rows: buildChartRows(wavelengths, allSeries),
@@ -618,27 +736,64 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
                   />
                   <YAxis tick={{ fontSize: 12 }} />
                   <Tooltip
-                    formatter={(value: number, name: string) => [
-                      Number(value).toFixed(6),
-                      chartModel.series.find((item) => item.id === name)?.label ?? name
-                    ]}
-                    labelFormatter={(label) => `${Math.round(Number(label))} нм`}
+                    content={({ active, payload, label }) => {
+                      if (!active || !payload?.length || !chartModel) return null
+
+                      const visibleItems = payload
+                        .map((item) => {
+                          const series = chartModel.series.find(
+                            (entry) => entry.id === item.dataKey
+                          )
+                          if (!series || !series.showInTooltip) return null
+
+                          return {
+                            label: series.label,
+                            color: series.color,
+                            value: Number(item.value)
+                          }
+                        })
+                        .filter(Boolean) as Array<{ label: string; color: string; value: number }>
+
+                      if (!visibleItems.length) return null
+
+                      return (
+                        <div className="rounded-xl border border-zinc-200 bg-white px-3 py-2 shadow-sm">
+                          <div className="text-xs text-zinc-500">
+                            {Math.round(Number(label))} нм
+                          </div>
+
+                          <div className="mt-2 space-y-1.5">
+                            {visibleItems.map((item) => (
+                              <div key={item.label} className="flex items-center gap-2 text-sm">
+                                <span
+                                  className="inline-block h-2.5 w-2.5 rounded-full"
+                                  style={{ backgroundColor: item.color }}
+                                />
+                                <span className="text-zinc-700">{item.label}:</span>
+                                <span className="font-medium text-zinc-900">
+                                  {item.value.toFixed(6)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    }}
                   />
-                  <Legend
-                    formatter={(value) =>
-                      chartModel.series.find((item) => item.id === value)?.label ?? value
-                    }
-                  />
+
                   {chartModel.series.map((series) => (
                     <Line
                       key={series.id}
                       type="monotone"
                       dataKey={series.id}
                       stroke={series.color}
-                      strokeWidth={series.strokeWidth ?? 1.5}
+                      strokeWidth={series.strokeWidth}
+                      strokeOpacity={series.strokeOpacity}
+                      strokeDasharray={series.strokeDasharray}
                       dot={false}
-                      activeDot={{ r: 3 }}
+                      activeDot={series.showInTooltip ? { r: 3 } : false}
                       isAnimationActive={false}
+                      legendType="none"
                     />
                   ))}
                 </LineChart>
