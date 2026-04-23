@@ -1,9 +1,11 @@
 import { JSX, useState } from 'react'
 import { RunPredictionButton } from '@/features/reconstruction/run-prediction'
 import { ChannelViewer } from '@/features/reconstruction/channel-viewer'
+import { PixelViewer } from '@/features/reconstruction/pixel-viewer'
 
 export function ReconstructionWorkspace(): JSX.Element {
   const [npyPath, setNpyPath] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'channels' | 'pixels'>('channels')
 
   const handlePickNpy = async (): Promise<void> => {
     try {
@@ -30,12 +32,13 @@ export function ReconstructionWorkspace(): JSX.Element {
 
       <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
         <div className="mb-4">
-          <h2 className="text-lg font-semibold text-zinc-900">Просмотр спектральных каналов</h2>
+          <h2 className="text-lg font-semibold text-zinc-900">Модули анализа</h2>
           <p className="mt-1 text-sm text-zinc-500">
-            Выберите индекс канала и посмотрите 2D-карту интенсивности
+            Выберите модуль для анализа спектральных данных
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
+
+        <div className="flex flex-wrap items-center gap-3 mb-4">
           <button
             onClick={handlePickNpy}
             className="rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800"
@@ -63,7 +66,37 @@ export function ReconstructionWorkspace(): JSX.Element {
           </p>
         </div>
 
-        <ChannelViewer npyPath={npyPath} />
+        <div className="mt-6">
+          <div className="border-b border-zinc-200">
+            <nav className="-mb-px flex space-x-8">
+              <button
+                onClick={() => setActiveTab('channels')}
+                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'channels'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-zinc-500 hover:text-zinc-700 hover:border-zinc-300'
+                }`}
+              >
+                Просмотр каналов
+              </button>
+              <button
+                onClick={() => setActiveTab('pixels')}
+                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'pixels'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-zinc-500 hover:text-zinc-700 hover:border-zinc-300'
+                }`}
+              >
+                Просмотр пикселей
+              </button>
+            </nav>
+          </div>
+
+          <div className="mt-6">
+            {activeTab === 'channels' && <ChannelViewer npyPath={npyPath} />}
+            {activeTab === 'pixels' && <PixelViewer npyPath={npyPath} />}
+          </div>
+        </div>
       </div>
     </div>
   )
