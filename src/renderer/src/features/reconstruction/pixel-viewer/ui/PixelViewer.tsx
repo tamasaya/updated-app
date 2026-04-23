@@ -1,4 +1,14 @@
 import { JSX, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis
+} from 'recharts'
 import { usePixelViewer } from '../model/usePixelViewer'
 
 type Props = {
@@ -27,14 +37,23 @@ type DraftSelection = {
   additive: boolean
 } | null
 
+type Series = {
+  id: string
+  label: string
+  color: string
+  values: number[]
+  strokeWidth?: number
+}
+
 const REGION_THRESHOLD = 3
 const WAVELENGTH_START_NM = 400
 const WAVELENGTH_END_NM = 700
 const MAX_REGION_LINES = 64
 const OVERLAY_COLORS = ['#38bdf8', '#f97316', '#22c55e', '#a855f7', '#ef4444', '#eab308']
+const AVERAGE_COLOR = '#111827'
 
 function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value))
+  return Math.max(min, Math.min(value, max))
 }
 
 function createId(prefix: string): string {
@@ -44,21 +63,78 @@ function createId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer)
-  let binary = ''
+function buildWavelengths(channelCount: number): number[] {
+  if (channelCount <= 1) return [WAVELENGTH_START_NM]
 
-  const chunkSize = 0x8000
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, i + chunkSize)
-    binary += String.fromCharCode(...chunk)
-  }
-
-  return btoa(binary)
+  return Array.from({ length: channelCount }, (_, index) => {
+    const ratio = index / (channelCount - 1)
+    return WAVELENGTH_START_NM + ratio * (WAVELENGTH_END_NM - WAVELENGTH_START_NM)
+  })
 }
 
-function arrayBufferToPngDataUrl(buffer: ArrayBuffer): string {
-  return `data:image/png;base64,${arrayBufferToBase64(buffer)}`
+function getSpectrumAtPoint(
+  cube: NonNullable<ReturnType<typeof usePixelViewer>['cube']>,
+  x: number,
+  y: number
+): number[] {
+  const [height, width, channels] = cube.shape
+  if (!height || !width || !channels) return []
+
+  const safeX = clamp(x, 0, width - 1)
+  const safeY = clamp(y, 0, height - 1)
+  const offset = (safeY * width + safeX) * channels
+
+  return Array.from({ length: channels }, (_, channelIndex) =>
+    Number(cube.data[offset + channelIndex])
+  )
+}
+
+function averageSpectra(spectra: number[][]): number[] {
+  if (spectra.length === 0) return []
+
+  const channelCount = spectra[0].length
+  const result = new Array(channelCount).fill(0)
+
+  for (const spectrum of spectra) {
+    for (let i = 0; i < channelCount; i += 1) {
+      result[i] += spectrum[i] ?? 0
+    }
+  }
+
+  for (let i = 0; i < channelCount; i += 1) {
+    result[i] /= spectra.length
+  }
+
+  return result
+}
+
+function sampleRegionPoints(region: Region, maxPoints: number): Array<{ x: number; y: number }> {
+  const points: Array<{ x: number; y: number }> = []
+
+  for (let y = region.y1; y <= region.y2; y += 1) {
+    for (let x = region.x1; x <= region.x2; x += 1) {
+      points.push({ x, y })
+    }
+  }
+
+  if (points.length <= maxPoints) {
+    return points
+  }
+
+  const step = Math.ceil(points.length / maxPoints)
+  return points.filter((_, index) => index % step === 0)
+}
+
+function buildChartRows(wavelengths: number[], series: Series[]) {
+  return wavelengths.map((wavelength, index) => {
+    const row: Record<string, number> = { wavelength }
+
+    for (const line of series) {
+      row[line.id] = line.values[index] ?? 0
+    }
+
+    return row
+  })
 }
 
 export function PixelViewer({ npyPath }: Props): JSX.Element {
@@ -75,22 +151,15 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
   const [points, setPoints] = useState<Point[]>([])
   const [regions, setRegions] = useState<Region[]>([])
   const [draftSelection, setDraftSelection] = useState<DraftSelection>(null)
-
-  const [chartUrl, setChartUrl] = useState<string | null>(null)
-  const [chartError, setChartError] = useState<string | null>(null)
-  const [chartLoading, setChartLoading] = useState(false)
   const [averageMode, setAverageMode] = useState<'show' | 'hide'>('show')
 
   const imageFrameRef = useRef<HTMLDivElement>(null)
   const [frameSize, setFrameSize] = useState({ width: 0, height: 0 })
-  const requestIdRef = useRef(0)
 
   useEffect(() => {
     setPoints([])
     setRegions([])
     setDraftSelection(null)
-    setChartUrl(null)
-    setChartError(null)
     setAverageMode('show')
   }, [npyPath])
 
@@ -163,60 +232,6 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
       y: clamp(Math.floor((localY / rect.height) * height), 0, height - 1)
     }
   }
-
-  const buildChart = async (
-    nextPoints: Point[],
-    nextRegions: Region[],
-    nextShowAverage: boolean
-  ) => {
-    if (!npyPath || (nextPoints.length === 0 && nextRegions.length === 0)) {
-      setChartUrl(null)
-      setChartError(null)
-      setChartLoading(false)
-      return
-    }
-
-    const requestId = ++requestIdRef.current
-    setChartLoading(true)
-    setChartError(null)
-
-    try {
-      const result = await window.reconstructionApi.runSeabornChart(npyPath, {
-        points: nextPoints.map(({ x, y }) => ({ x, y })),
-        regions: nextRegions.map(({ x1, y1, x2, y2 }) => ({ x1, y1, x2, y2 })),
-        showAverage: nextShowAverage,
-        wavelengthStartNm: WAVELENGTH_START_NM,
-        wavelengthEndNm: WAVELENGTH_END_NM,
-        maxRegionLines: MAX_REGION_LINES
-      })
-
-      if (requestId !== requestIdRef.current) return
-
-      if (!result?.ok || !result.outputPath) {
-        setChartUrl(null)
-        setChartError(result?.error ?? 'Не удалось построить график')
-        return
-      }
-
-      const imageFile = await window.reconstructionApi.readImageFile(result.outputPath)
-      if (requestId !== requestIdRef.current) return
-
-      setChartUrl(arrayBufferToPngDataUrl(imageFile.bytes))
-      setChartError(null)
-    } catch (nextError) {
-      if (requestId !== requestIdRef.current) return
-      setChartUrl(null)
-      setChartError(nextError instanceof Error ? nextError.message : String(nextError))
-    } finally {
-      if (requestId === requestIdRef.current) {
-        setChartLoading(false)
-      }
-    }
-  }
-
-  useEffect(() => {
-    void buildChart(points, regions, averageMode === 'show')
-  }, [points, regions, averageMode, npyPath])
 
   const commitDraftSelection = (selection: NonNullable<DraftSelection>) => {
     const dx = Math.abs(selection.currentX - selection.startX)
@@ -301,10 +316,53 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
     setPoints([])
     setRegions([])
     setDraftSelection(null)
-    setChartUrl(null)
-    setChartError(null)
-    setChartLoading(false)
   }
+
+  const chartModel = useMemo(() => {
+    if (!cube || (points.length === 0 && regions.length === 0)) {
+      return null
+    }
+
+    const wavelengths = buildWavelengths(channels)
+    const pointSeries: Series[] = points.map((point, index) => ({
+      id: point.id,
+      label: `Точка ${index + 1}`,
+      color: OVERLAY_COLORS[index % OVERLAY_COLORS.length],
+      values: getSpectrumAtPoint(cube, point.x, point.y)
+    }))
+
+    const regionSeries: Series[] = regions.flatMap((region, regionIndex) => {
+      const sampledPoints = sampleRegionPoints(region, MAX_REGION_LINES)
+      return sampledPoints.map((point, pointIndex) => ({
+        id: `${region.id}-${pointIndex}`,
+        label: `Область ${regionIndex + 1} · P${pointIndex + 1}`,
+        color: OVERLAY_COLORS[(points.length + regionIndex) % OVERLAY_COLORS.length],
+        values: getSpectrumAtPoint(cube, point.x, point.y)
+      }))
+    })
+
+    const baseSeries = [...pointSeries, ...regionSeries]
+    const meanValues = averageSpectra(baseSeries.map((item) => item.values))
+
+    const allSeries =
+      averageMode === 'show'
+        ? [
+            ...baseSeries,
+            {
+              id: 'average',
+              label: 'Средняя',
+              color: AVERAGE_COLOR,
+              values: meanValues,
+              strokeWidth: 3
+            }
+          ]
+        : baseSeries
+
+    return {
+      rows: buildChartRows(wavelengths, allSeries),
+      series: allSeries
+    }
+  }, [cube, points, regions, averageMode, channels])
 
   const selectedRects =
     pixelScale &&
@@ -538,27 +596,54 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
           </div>
         </div>
 
-        {points.length === 0 && regions.length === 0 ? (
+        {!chartModel ? (
           <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50 px-4 py-6 text-sm text-zinc-500">
             Выберите хотя бы одну точку или область на изображении.
           </div>
-        ) : chartLoading ? (
-          <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-6 text-sm text-zinc-500">
-            Построение графика...
-          </div>
-        ) : chartError ? (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {chartError}
-          </div>
-        ) : chartUrl ? (
-          <img
-            src={chartUrl}
-            alt="Спектральные графики"
-            className="block w-full rounded-xl border border-zinc-200"
-          />
         ) : (
-          <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-6 text-sm text-zinc-500">
-            Нет данных для построения графика.
+          <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+            <div className="h-[420px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart
+                  data={chartModel.rows}
+                  margin={{ top: 16, right: 24, left: 8, bottom: 8 }}
+                >
+                  <CartesianGrid stroke="#e4e4e7" strokeDasharray="4 4" />
+                  <XAxis
+                    dataKey="wavelength"
+                    type="number"
+                    domain={['dataMin', 'dataMax']}
+                    tick={{ fontSize: 12 }}
+                    tickFormatter={(value) => `${Math.round(value)} nm`}
+                  />
+                  <YAxis tick={{ fontSize: 12 }} />
+                  <Tooltip
+                    formatter={(value: number, name: string) => [
+                      Number(value).toFixed(6),
+                      chartModel.series.find((item) => item.id === name)?.label ?? name
+                    ]}
+                    labelFormatter={(label) => `${Math.round(Number(label))} нм`}
+                  />
+                  <Legend
+                    formatter={(value) =>
+                      chartModel.series.find((item) => item.id === value)?.label ?? value
+                    }
+                  />
+                  {chartModel.series.map((series) => (
+                    <Line
+                      key={series.id}
+                      type="monotone"
+                      dataKey={series.id}
+                      stroke={series.color}
+                      strokeWidth={series.strokeWidth ?? 1.5}
+                      dot={false}
+                      activeDot={{ r: 3 }}
+                      isAnimationActive={false}
+                    />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         )}
       </div>
