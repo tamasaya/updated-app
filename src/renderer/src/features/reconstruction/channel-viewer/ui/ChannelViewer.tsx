@@ -1,5 +1,5 @@
 import { JSX } from 'react'
-import { useChannelViewer } from '../model/useChannelViewer'
+import { useChannelViewer, RgbMode, Normalization, Contrast } from '../model/useChannelViewer'
 
 type Props = {
   npyPath: string | null
@@ -13,7 +13,16 @@ export function ChannelViewer({ npyPath }: Props): JSX.Element {
     selectedChannel,
     setSelectedChannel,
     channelCount,
-    imageDataUrl
+    imageDataUrl,
+    rgbMode,
+    setRgbMode,
+    customChannels,
+    setCustomChannels,
+    normalization,
+    setNormalization,
+    contrast,
+    setContrast,
+    rgbImageDataUrl
   } = useChannelViewer(npyPath)
 
   if (!npyPath) {
@@ -41,51 +50,154 @@ export function ChannelViewer({ npyPath }: Props): JSX.Element {
   return (
     <div className="space-y-4">
       <div className="grid gap-4 md:grid-cols-2">
-        <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-700">
-          <div>
-            Размер: {width} × {height}
+        <div className="flex gap-4">
+          <div className="rounded-xl w-full border border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-700">
+            <div>
+              Размер: {width} × {height}
+            </div>
+            <div>Каналов: {channels}</div>
+            <div>Текущий канал: {selectedChannel}</div>
           </div>
-          <div>Каналов: {channels}</div>
-          <div>Текущий канал: {selectedChannel}</div>
+          <div className="space-y-2 w-full">
+            <label htmlFor="channel-range" className="block text-sm font-medium text-zinc-800">
+              Индекс канала
+            </label>
+
+            <input
+              id="channel-range"
+              type="range"
+              min={0}
+              max={Math.max(channelCount - 1, 0)}
+              step={1}
+              value={selectedChannel}
+              onChange={(event) => setSelectedChannel(Number(event.target.value))}
+              className="w-full"
+            />
+
+            <input
+              type="number"
+              min={0}
+              max={Math.max(channelCount - 1, 0)}
+              value={selectedChannel}
+              onChange={(event) => setSelectedChannel(Number(event.target.value))}
+              className="w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm outline-none ring-0 focus:border-blue-500"
+            />
+          </div>
         </div>
 
-        <div className="space-y-2">
-          <label htmlFor="channel-range" className="block text-sm font-medium text-zinc-800">
-            Индекс канала
-          </label>
+        <div>
+          <h3 className="text-sm font-medium text-zinc-800 mb-3">Псевдо-RGB представление</h3>
+          <div className="space-y-3 mb-3">
+            <div>
+              <label className="block text-sm font-medium text-zinc-800 mb-1">Режим</label>
+              <select
+                value={rgbMode}
+                onChange={(e) => setRgbMode(e.target.value as RgbMode)}
+                className="w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm outline-none ring-0 focus:border-blue-500"
+              >
+                <option value="standard">Стандартный (R≈650, G≈550, B≈450 нм)</option>
+                <option value="custom">Пользовательский выбор</option>
+              </select>
+            </div>
 
-          <input
-            id="channel-range"
-            type="range"
-            min={0}
-            max={Math.max(channelCount - 1, 0)}
-            step={1}
-            value={selectedChannel}
-            onChange={(event) => setSelectedChannel(Number(event.target.value))}
-            className="w-full"
-          />
+            {rgbMode === 'custom' && (
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-xs text-zinc-600 mb-1">R канал</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={channelCount - 1}
+                    value={customChannels.r}
+                    onChange={(e) =>
+                      setCustomChannels({ ...customChannels, r: Number(e.target.value) })
+                    }
+                    className="w-full rounded border border-zinc-300 px-2 py-1 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-zinc-600 mb-1">G канал</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={channelCount - 1}
+                    value={customChannels.g}
+                    onChange={(e) =>
+                      setCustomChannels({ ...customChannels, g: Number(e.target.value) })
+                    }
+                    className="w-full rounded border border-zinc-300 px-2 py-1 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-zinc-600 mb-1">B канал</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={channelCount - 1}
+                    value={customChannels.b}
+                    onChange={(e) =>
+                      setCustomChannels({ ...customChannels, b: Number(e.target.value) })
+                    }
+                    className="w-full rounded border border-zinc-300 px-2 py-1 text-sm"
+                  />
+                </div>
+              </div>
+            )}
 
-          <input
-            type="number"
-            min={0}
-            max={Math.max(channelCount - 1, 0)}
-            value={selectedChannel}
-            onChange={(event) => setSelectedChannel(Number(event.target.value))}
-            className="w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm outline-none ring-0 focus:border-blue-500"
-          />
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-sm font-medium text-zinc-800 mb-1">Нормализация</label>
+                <select
+                  value={normalization}
+                  onChange={(e) => setNormalization(e.target.value as Normalization)}
+                  className="w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm outline-none ring-0 focus:border-blue-500"
+                >
+                  <option value="auto">Авто</option>
+                  <option value="fixed">Фиксированная</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-zinc-800 mb-1">Контраст</label>
+                <select
+                  value={contrast}
+                  onChange={(e) => setContrast(e.target.value as Contrast)}
+                  className="w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm outline-none ring-0 focus:border-blue-500"
+                >
+                  <option value="none">Без усиления</option>
+                  <option value="gamma">Гамма коррекция</option>
+                </select>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
-        {imageDataUrl ? (
-          <img
-            src={imageDataUrl}
-            alt={`Канал ${selectedChannel}`}
-            className="max-h-130 rounded-lg border border-zinc-200 bg-white object-contain"
-          />
-        ) : (
-          <div className="text-sm text-zinc-500">Не удалось построить карту интенсивности.</div>
-        )}
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+          <h3 className="text-sm font-medium text-zinc-800 mb-3">Спектральный канал</h3>
+          {imageDataUrl ? (
+            <img
+              src={imageDataUrl}
+              alt={`Канал ${selectedChannel}`}
+              className="max-h-130 rounded-lg border border-zinc-200 bg-white object-contain"
+            />
+          ) : (
+            <div className="text-sm text-zinc-500">Не удалось построить карту интенсивности.</div>
+          )}
+        </div>
+
+        <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+          <h3 className="text-sm font-medium text-zinc-800 mb-3">Спектральный канал</h3>
+          {rgbImageDataUrl ? (
+            <img
+              src={rgbImageDataUrl}
+              alt="Псевдо-RGB"
+              className="max-h-130 rounded-lg border border-zinc-200 bg-white object-contain"
+            />
+          ) : (
+            <div className="text-sm text-zinc-500">Не удалось построить RGB изображение.</div>
+          )}
+        </div>
       </div>
     </div>
   )

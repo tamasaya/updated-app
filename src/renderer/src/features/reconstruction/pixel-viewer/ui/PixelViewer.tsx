@@ -311,24 +311,32 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
             Размер: {width} × {height}
           </div>
           <div>Каналов: {channels}</div>
+          <div>Выбранный канал: {selectedChannel}</div>
         </div>
 
         <div className="space-y-2">
-          <label htmlFor="channel-select" className="block text-sm font-medium text-zinc-800">
-            Выберите канал
+          <label htmlFor="channel-range" className="block text-sm font-medium text-zinc-800">
+            Индекс канала
           </label>
-          <select
-            id="channel-select"
+
+          <input
+            id="channel-range"
+            type="range"
+            min={0}
+            max={Math.max(channelCount - 1, 0)}
+            step={1}
             value={selectedChannel}
-            onChange={(e) => setSelectedChannel(Number(e.target.value))}
+            onChange={(event) => setSelectedChannel(Number(event.target.value))}
+            className="w-full"
+          />
+          <input
+            type="number"
+            min={0}
+            max={Math.max(channelCount - 1, 0)}
+            value={selectedChannel}
+            onChange={(event) => setSelectedChannel(Number(event.target.value))}
             className="w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm outline-none ring-0 focus:border-blue-500"
-          >
-            {Array.from({ length: channelCount }, (_, i) => (
-              <option key={i} value={i}>
-                Канал {i}
-              </option>
-            ))}
-          </select>
+          />
         </div>
       </div>
 
