@@ -55,8 +55,6 @@ const REGION_THRESHOLD = 3
 const WAVELENGTH_START_NM = 400
 const WAVELENGTH_END_NM = 700
 const MAX_REGION_LINES = 64
-const OVERLAY_COLORS = ['#38bdf8', '#f97316', '#22c55e', '#a855f7', '#ef4444', '#eab308']
-const AVERAGE_COLOR = '#111827'
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(value, max))
@@ -163,7 +161,7 @@ function sampleRegionPoints(region: Region, maxPoints: number): Array<{ x: numbe
   return points.filter((_, index) => index % step === 0)
 }
 
-function buildChartRows(wavelengths: number[], series: Series[]) {
+function buildChartRows(wavelengths: number[], series: Series[]): Record<string, number>[] {
   return wavelengths.map((wavelength, index) => {
     const row: Record<string, number> = { wavelength }
 
@@ -179,7 +177,7 @@ const POINT_COLORS = ['#0ea5e9', '#f97316', '#ef4444', '#14b8a6', '#eab308']
 const REGION_COLORS = ['#22c55e', '#a855f7', '#ec4899', '#84cc16', '#06b6d4']
 const GLOBAL_MEAN_COLOR = '#111827'
 
-function hexToRgb(hex: string) {
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const clean = hex.replace('#', '')
   const full =
     clean.length === 3
@@ -243,7 +241,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
     const element = imageFrameRef.current
     if (!element) return
 
-    const updateSize = () => {
+    const updateSize = (): void => {
       setFrameSize({
         width: element.clientWidth,
         height: element.clientHeight
@@ -293,7 +291,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
     return item?.color ?? '#38bdf8'
   }
 
-  const getImageCoords = (event: React.PointerEvent<HTMLDivElement>) => {
+  const getImageCoords = (event: React.PointerEvent<HTMLDivElement>): { x: number; y: number } => {
     const rect = imageFrameRef.current?.getBoundingClientRect()
 
     if (!rect || rect.width === 0 || rect.height === 0 || !width || !height) {
@@ -309,7 +307,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
     }
   }
 
-  const commitDraftSelection = (selection: NonNullable<DraftSelection>) => {
+  const commitDraftSelection = (selection: NonNullable<DraftSelection>): void => {
     const dx = Math.abs(selection.currentX - selection.startX)
     const dy = Math.abs(selection.currentY - selection.startY)
 
@@ -346,7 +344,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
     }
   }
 
-  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
     event.preventDefault()
 
     const point = getImageCoords(event)
@@ -359,7 +357,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
     })
   }
 
-  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>): void => {
     if (!draftSelection) return
 
     event.preventDefault()
@@ -376,19 +374,19 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
     )
   }
 
-  const handlePointerUp = () => {
+  const handlePointerUp = (): void => {
     if (!draftSelection) return
     commitDraftSelection(draftSelection)
     setDraftSelection(null)
   }
 
-  const handlePointerLeave = () => {
+  const handlePointerLeave = (): void => {
     if (!draftSelection) return
     commitDraftSelection(draftSelection)
     setDraftSelection(null)
   }
 
-  const clearSelection = () => {
+  const clearSelection = (): void => {
     setPoints([])
     setRegions([])
     setDraftSelection(null)

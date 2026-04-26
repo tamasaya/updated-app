@@ -55,6 +55,8 @@ app.whenReady().then(() => {
 
   ipcMain.on('ping', () => console.log('pong'))
 
+  // registerSpotreadIpc(() => mainWindow)
+
   mainWindow = createWindow()
 
   app.on('activate', function () {
@@ -136,84 +138,6 @@ ipcMain.handle('run-predict', async () => {
         stderr,
         outputPath: code === 0 ? outputPath : null
       })
-    })
-  })
-})
-
-function getChartWorkerExePath(): string {
-  if (app.isPackaged) {
-    return path.join(process.resourcesPath, 'python', 'chart-worker', 'chart-worker.exe')
-  }
-
-  return path.join(process.cwd(), 'python-helper', 'dist', 'chart-worker', 'chart-worker.exe')
-}
-
-ipcMain.handle('read-image-file', async (_event, filePath: string) => {
-  const buffer = fs.readFileSync(filePath)
-
-  return {
-    filePath,
-    bytes: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
-  }
-})
-
-ipcMain.handle('run-seaborn-chart', async (_event, npyPath: string, options?: unknown) => {
-  return await new Promise((resolve) => {
-    const exePath = getChartWorkerExePath()
-    const outputPath = path.join(app.getPath('temp'), `chart-${Date.now()}.png`)
-
-    if (!fs.existsSync(exePath)) {
-      resolve({
-        ok: false,
-        error: `Chart worker not found: ${exePath}`,
-        outputPath: null
-      })
-      return
-    }
-
-    const args = [npyPath, outputPath]
-    if (options !== undefined) {
-      args.push(JSON.stringify(options))
-    }
-
-    const child = spawn(exePath, args, {
-      windowsHide: true
-    })
-
-    let stdout = ''
-    let stderr = ''
-
-    child.stdout.on('data', (data) => {
-      stdout += data.toString('utf8')
-    })
-
-    child.stderr.on('data', (data) => {
-      stderr += data.toString('utf8')
-    })
-
-    child.on('error', (error) => {
-      resolve({
-        ok: false,
-        error: error.message,
-        stdout,
-        stderr,
-        outputPath: null
-      })
-    })
-
-    child.on('close', () => {
-      try {
-        const parsed = JSON.parse(stdout.trim())
-        resolve(parsed)
-      } catch {
-        resolve({
-          ok: false,
-          error: 'Invalid JSON from chart worker',
-          stdout,
-          stderr,
-          outputPath: null
-        })
-      }
     })
   })
 })

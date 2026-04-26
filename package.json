@@ -25,6 +25,7 @@
     "@electron-toolkit/utils": "^4.0.0",
     "@tailwindcss/vite": "^4.2.2",
     "electron-updater": "^6.3.9",
+    "lucide-react": "^1.11.0",
     "npyjs": "^1.1.0",
     "react-router-dom": "^7.14.1",
     "recharts": "^3.8.1",
