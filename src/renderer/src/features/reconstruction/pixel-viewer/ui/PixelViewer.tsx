@@ -1,13 +1,28 @@
 import { JSX, useEffect, useMemo, useRef, useState } from 'react'
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis
-} from 'recharts'
+  Activity,
+  Beaker,
+  ChartLine,
+  CircleDot,
+  CircleEllipsis,
+  CircleOff,
+  CirclePlus,
+  CircleSlash2,
+  Compass,
+  Crosshair,
+  Diamond,
+  Flag,
+  FlaskConical,
+  Gauge,
+  LucideIcon,
+  Orbit,
+  PanelTop,
+  Pentagon,
+  Radar,
+  Sparkles,
+  Star
+} from 'lucide-react'
 import { jsPDF } from 'jspdf'
 import * as XLSX from 'xlsx'
 import { usePixelViewer } from '../model/usePixelViewer'
@@ -62,10 +77,154 @@ type TableRow = {
   comment: string
 }
 
+type TableIconKey =
+  | 'activity'
+  | 'beaker'
+  | 'chartLine'
+  | 'circleDot'
+  | 'circleEllipsis'
+  | 'circleOff'
+  | 'circlePlus'
+  | 'circleSlash2'
+  | 'compass'
+  | 'crosshair'
+  | 'diamond'
+  | 'flag'
+  | 'flaskConical'
+  | 'gauge'
+  | 'orbit'
+  | 'panelTop'
+  | 'pentagon'
+  | 'radar'
+  | 'sparkles'
+  | 'star'
+
+type DataTable = {
+  id: string
+  name: string
+  iconKey: TableIconKey
+  rows: TableRow[]
+}
+
+type PersistedTablesState = {
+  tables: DataTable[]
+  activeTableId: string | null
+}
+
 const REGION_THRESHOLD = 3
 const WAVELENGTH_START_NM = 400
 const WAVELENGTH_END_NM = 700
 const MAX_REGION_LINES = 64
+const INDEXED_DB_NAME = 'pixel-viewer-db'
+const INDEXED_DB_VERSION = 1
+const INDEXED_DB_STORE = 'viewer-state'
+const INDEXED_DB_STATE_KEY = 'tables'
+
+const TABLE_ICON_COMPONENTS: Record<TableIconKey, LucideIcon> = {
+  activity: Activity,
+  beaker: Beaker,
+  chartLine: ChartLine,
+  circleDot: CircleDot,
+  circleEllipsis: CircleEllipsis,
+  circleOff: CircleOff,
+  circlePlus: CirclePlus,
+  circleSlash2: CircleSlash2,
+  compass: Compass,
+  crosshair: Crosshair,
+  diamond: Diamond,
+  flag: Flag,
+  flaskConical: FlaskConical,
+  gauge: Gauge,
+  orbit: Orbit,
+  panelTop: PanelTop,
+  pentagon: Pentagon,
+  radar: Radar,
+  sparkles: Sparkles,
+  star: Star
+}
+
+const TABLE_ICON_KEYS: TableIconKey[] = [
+  'activity',
+  'beaker',
+  'chartLine',
+  'circleDot',
+  'circleEllipsis',
+  'circleOff',
+  'circlePlus',
+  'circleSlash2',
+  'compass',
+  'crosshair',
+  'diamond',
+  'flag',
+  'flaskConical',
+  'gauge',
+  'orbit',
+  'panelTop',
+  'pentagon',
+  'radar',
+  'sparkles',
+  'star'
+]
+
+function createDefaultTable(name = 'Таблица 1', iconKey: TableIconKey = 'activity'): DataTable {
+  return {
+    id: createId('data-table'),
+    name,
+    iconKey,
+    rows: []
+  }
+}
+
+async function openPixelViewerDb(): Promise<IDBDatabase> {
+  return await new Promise((resolve, reject) => {
+    const request = window.indexedDB.open(INDEXED_DB_NAME, INDEXED_DB_VERSION)
+
+    request.onupgradeneeded = () => {
+      const db = request.result
+      if (!db.objectStoreNames.contains(INDEXED_DB_STORE)) {
+        db.createObjectStore(INDEXED_DB_STORE, { keyPath: 'id' })
+      }
+    }
+
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error ?? new Error('Failed to open indexedDB'))
+  })
+}
+
+async function loadPersistedTablesState(): Promise<PersistedTablesState | null> {
+  const db = await openPixelViewerDb()
+  try {
+    return await new Promise((resolve, reject) => {
+      const transaction = db.transaction(INDEXED_DB_STORE, 'readonly')
+      const store = transaction.objectStore(INDEXED_DB_STORE)
+      const request = store.get(INDEXED_DB_STATE_KEY)
+
+      request.onsuccess = () => {
+        const value = request.result as { id: string; payload: PersistedTablesState } | undefined
+        resolve(value?.payload ?? null)
+      }
+      request.onerror = () => reject(request.error ?? new Error('Failed to read indexedDB state'))
+    })
+  } finally {
+    db.close()
+  }
+}
+
+async function savePersistedTablesState(payload: PersistedTablesState): Promise<void> {
+  const db = await openPixelViewerDb()
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(INDEXED_DB_STORE, 'readwrite')
+      const store = transaction.objectStore(INDEXED_DB_STORE)
+      store.put({ id: INDEXED_DB_STATE_KEY, payload })
+
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error ?? new Error('Failed to save indexedDB state'))
+    })
+  } finally {
+    db.close()
+  }
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(value, max))
@@ -353,7 +512,9 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
   const [points, setPoints] = useState<Point[]>([])
   const [regions, setRegions] = useState<Region[]>([])
   const [enabledSelectionIds, setEnabledSelectionIds] = useState<Set<string>>(() => new Set())
-  const [tableRows, setTableRows] = useState<TableRow[]>([])
+  const [dataTables, setDataTables] = useState<DataTable[]>([])
+  const [activeTableId, setActiveTableId] = useState<string | null>(null)
+  const hasLoadedTablesRef = useRef(false)
   const [contextMenu, setContextMenu] = useState<{
     x: number
     y: number
@@ -370,11 +531,58 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
     setPoints([])
     setRegions([])
     setEnabledSelectionIds(new Set())
-    setTableRows([])
     setContextMenu(null)
     setDraftSelection(null)
     setAverageMode('show')
   }, [npyPath])
+
+  useEffect(() => {
+    let isMounted = true
+
+    const load = async (): Promise<void> => {
+      try {
+        const persisted = await loadPersistedTablesState()
+        if (!isMounted) return
+
+        if (persisted?.tables?.length) {
+          setDataTables(persisted.tables)
+          const hasActive = persisted.activeTableId
+            ? persisted.tables.some((table) => table.id === persisted.activeTableId)
+            : false
+          setActiveTableId(hasActive ? persisted.activeTableId : persisted.tables[0].id)
+        } else {
+          const defaultTable = createDefaultTable()
+          setDataTables([defaultTable])
+          setActiveTableId(defaultTable.id)
+        }
+      } catch {
+        if (!isMounted) return
+        const fallback = createDefaultTable()
+        setDataTables([fallback])
+        setActiveTableId(fallback.id)
+      } finally {
+        if (isMounted) {
+          hasLoadedTablesRef.current = true
+        }
+      }
+    }
+
+    void load()
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!hasLoadedTablesRef.current) return
+
+    const payload: PersistedTablesState = {
+      tables: dataTables,
+      activeTableId
+    }
+    void savePersistedTablesState(payload)
+  }, [dataTables, activeTableId])
 
   useEffect(() => {
     const element = imageFrameRef.current
@@ -452,6 +660,68 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
     (acc, region) => acc + (enabledSelectionIds.has(region.id) ? 1 : 0),
     0
   )
+
+  const activeTable = useMemo(
+    () => dataTables.find((table) => table.id === activeTableId) ?? null,
+    [dataTables, activeTableId]
+  )
+
+  const updateActiveTableRows = (updater: (rows: TableRow[]) => TableRow[]): void => {
+    if (!activeTableId) return
+    setDataTables((prev) =>
+      prev.map((table) =>
+        table.id === activeTableId
+          ? {
+              ...table,
+              rows: updater(table.rows)
+            }
+          : table
+      )
+    )
+  }
+
+  const handleCreateTable = (): void => {
+    const nextIndex = dataTables.length + 1
+    const nextIcon = TABLE_ICON_KEYS[dataTables.length % TABLE_ICON_KEYS.length]
+    const next = createDefaultTable(`Таблица ${nextIndex}`, nextIcon)
+    setDataTables((prev) => [...prev, next])
+    setActiveTableId(next.id)
+  }
+
+  const handleDeleteActiveTable = (): void => {
+    if (!activeTableId || dataTables.length <= 1) return
+    const next = dataTables.filter((table) => table.id !== activeTableId)
+    setDataTables(next)
+    setActiveTableId(next[0]?.id ?? null)
+  }
+
+  const handleRenameActiveTable = (name: string): void => {
+    if (!activeTableId) return
+    setDataTables((prev) =>
+      prev.map((table) =>
+        table.id === activeTableId
+          ? {
+              ...table,
+              name
+            }
+          : table
+      )
+    )
+  }
+
+  const handleChangeActiveTableIcon = (iconKey: TableIconKey): void => {
+    if (!activeTableId) return
+    setDataTables((prev) =>
+      prev.map((table) =>
+        table.id === activeTableId
+          ? {
+              ...table,
+              iconKey
+            }
+          : table
+      )
+    )
+  }
 
   const toggleSelection = (id: string): void => {
     setEnabledSelectionIds((prev) => {
@@ -594,7 +864,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
   }
 
   const addSelectionToTable = (selectionId: string): void => {
-    if (!cube) return
+    if (!cube || !activeTableId) return
 
     const point = points.find((entry) => entry.id === selectionId)
     const region = regions.find((entry) => entry.id === selectionId)
@@ -623,21 +893,40 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
       comment: ''
     }
 
-    setTableRows((prev) => [...prev, nextRow])
+    updateActiveTableRows((prev) => [...prev, nextRow])
     setContextMenu(null)
   }
 
   const handleCommentChange = (rowId: string, value: string): void => {
-    setTableRows((prev) =>
+    updateActiveTableRows((prev) =>
       prev.map((row) => (row.id === rowId ? { ...row, comment: value } : row))
     )
   }
 
+  const handleValueChange = (rowId: string, channelIndex: number, value: string): void => {
+    updateActiveTableRows((prev) =>
+      prev.map((row) => {
+        if (row.id !== rowId) return row
+        const nextValues = [...row.values]
+        const parsed = Number(value.replace(',', '.'))
+        nextValues[channelIndex] = Number.isFinite(parsed) ? parsed : 0
+        return {
+          ...row,
+          values: nextValues
+        }
+      })
+    )
+  }
+
+  const handleDeleteRow = (rowId: string): void => {
+    updateActiveTableRows((prev) => prev.filter((row) => row.id !== rowId))
+  }
+
   const handleExportTableCsv = (): void => {
-    if (!tableRows.length) return
+    if (!activeTable?.rows.length) return
 
     const stamp = getTimestampForFilename(new Date())
-    const filename = `pixel-viewer-table-${stamp}.csv`
+    const filename = `${activeTable.name || 'pixel-viewer-table'}-${stamp}.csv`
 
     const header = [
       escapeCsvCell('№'),
@@ -645,7 +934,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
       ...wavelengthColumns.map((wavelength) => escapeCsvCell(`${Math.round(wavelength)} нм`))
     ].join(',')
 
-    const lines = tableRows.map((row, index) => {
+    const lines = activeTable.rows.map((row, index) => {
       const cells: string[] = []
       cells.push(escapeCsvCell(String(index + 1)))
       cells.push(escapeCsvCell(row.comment ?? ''))
@@ -661,10 +950,10 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
   }
 
   const handleExportTableExcel = (): void => {
-    if (!tableRows.length) return
+    if (!activeTable?.rows.length) return
 
     const stamp = getTimestampForFilename(new Date())
-    const filename = `pixel-viewer-table-${stamp}.xlsx`
+    const filename = `${activeTable.name || 'pixel-viewer-table'}-${stamp}.xlsx`
 
     const headerRow: Array<string | number> = [
       '№',
@@ -672,7 +961,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
       ...wavelengthColumns.map((wavelength) => `${Math.round(wavelength)} нм`)
     ]
 
-    const dataRows: Array<Array<string | number>> = tableRows.map((row, index) => {
+    const dataRows: Array<Array<string | number>> = activeTable.rows.map((row, index) => {
       const values = wavelengthColumns.map((_, i) => Number(row.values[i] ?? 0))
       return [index + 1, row.comment ?? '', ...values]
     })
@@ -1214,8 +1503,23 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
           <div className="flex items-center gap-2">
             <button
               type="button"
+              onClick={handleCreateTable}
+              className="rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-700 transition hover:bg-zinc-50"
+            >
+              + Таблица
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteActiveTable}
+              disabled={dataTables.length <= 1}
+              className="rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Удалить таблицу
+            </button>
+            <button
+              type="button"
               onClick={handleExportTableCsv}
-              disabled={!tableRows.length}
+              disabled={!activeTable?.rows.length}
               className="rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               CSV
@@ -1223,7 +1527,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
             <button
               type="button"
               onClick={handleExportTableExcel}
-              disabled={!tableRows.length}
+              disabled={!activeTable?.rows.length}
               className="rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Excel
@@ -1231,7 +1535,66 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
           </div>
         </div>
 
-        {!tableRows.length ? (
+        <div className="mb-4 space-y-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            {dataTables.map((table) => {
+              const Icon = TABLE_ICON_COMPONENTS[table.iconKey]
+              const isActive = table.id === activeTableId
+              return (
+                <button
+                  key={table.id}
+                  type="button"
+                  onClick={() => setActiveTableId(table.id)}
+                  className={[
+                    'inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs',
+                    isActive
+                      ? 'border-blue-200 bg-blue-50 text-blue-700'
+                      : 'border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100'
+                  ].join(' ')}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {table.name}
+                </button>
+              )
+            })}
+          </div>
+
+          {activeTable ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <input
+                value={activeTable.name}
+                onChange={(event) => handleRenameActiveTable(event.target.value)}
+                placeholder="Название таблицы"
+                className="w-56 rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-blue-500"
+              />
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                {TABLE_ICON_KEYS.map((key) => {
+                  const Icon = TABLE_ICON_COMPONENTS[key]
+                  const isSelected = activeTable.iconKey === key
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => handleChangeActiveTableIcon(key)}
+                      className={[
+                        'rounded-md border p-1.5 transition',
+                        isSelected
+                          ? 'border-blue-300 bg-blue-50 text-blue-700'
+                          : 'border-zinc-300 bg-white text-zinc-600 hover:bg-zinc-100'
+                      ].join(' ')}
+                      title={key}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        {!activeTable?.rows.length ? (
           <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50 px-4 py-5 text-sm text-zinc-500">
             Таблица пустая. Добавьте строки через контекстное меню по правому клику на выделении.
           </div>
@@ -1244,6 +1607,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
                   <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">
                     Комментарий
                   </th>
+                  <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">Действия</th>
                   {wavelengthColumns.map((wavelength, index) => (
                     <th
                       key={`wl-${index}`}
@@ -1256,7 +1620,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
               </thead>
 
               <tbody>
-                {tableRows.map((row, rowIndex) => (
+                {activeTable.rows.map((row, rowIndex) => (
                   <tr key={row.id} className="odd:bg-white even:bg-zinc-50/40">
                     <td className="w-44 border-b border-zinc-100 px-3 py-2 align-top text-zinc-700">
                       <div className="flex items-center gap-2">
@@ -1276,12 +1640,25 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
                         className="w-56 rounded-md border border-zinc-300 px-2 py-1 text-xs outline-none focus:border-blue-500"
                       />
                     </td>
+                    <td className="border-b border-zinc-100 px-3 py-2 align-top">
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteRow(row.id)}
+                        className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-[11px] text-zinc-700 transition hover:bg-zinc-100"
+                      >
+                        Удалить
+                      </button>
+                    </td>
                     {wavelengthColumns.map((_, index) => (
                       <td
                         key={`${row.id}-val-${index}`}
                         className="border-b border-zinc-100 px-2 py-2 text-right text-zinc-700 whitespace-nowrap"
                       >
-                        {(row.values[index] ?? 0).toFixed(6)}
+                        <input
+                          value={(row.values[index] ?? 0).toFixed(6)}
+                          onChange={(event) => handleValueChange(row.id, index, event.target.value)}
+                          className="w-24 rounded border border-zinc-300 bg-white px-1.5 py-1 text-right text-xs outline-none focus:border-blue-500"
+                        />
                       </td>
                     ))}
                   </tr>
