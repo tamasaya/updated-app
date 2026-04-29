@@ -19,6 +19,7 @@ import {
   Orbit,
   PanelTop,
   Pentagon,
+  Pencil,
   Radar,
   Sparkles,
   Star
@@ -520,6 +521,14 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
     y: number
     selectionId: string
   } | null>(null)
+  const [isTableSettingsOpen, setIsTableSettingsOpen] = useState(false)
+  const [tableSettingsDraft, setTableSettingsDraft] = useState<{
+    name: string
+    iconKey: TableIconKey
+  }>({
+    name: '',
+    iconKey: 'activity'
+  })
   const [draftSelection, setDraftSelection] = useState<DraftSelection>(null)
   const [averageMode, setAverageMode] = useState<'show' | 'hide'>('show')
 
@@ -721,6 +730,21 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
           : table
       )
     )
+  }
+
+  const handleOpenTableSettings = (): void => {
+    if (!activeTable) return
+    setTableSettingsDraft({
+      name: activeTable.name,
+      iconKey: activeTable.iconKey
+    })
+    setIsTableSettingsOpen(true)
+  }
+
+  const handleSaveTableSettings = (): void => {
+    handleRenameActiveTable(tableSettingsDraft.name)
+    handleChangeActiveTableIcon(tableSettingsDraft.iconKey)
+    setIsTableSettingsOpen(false)
   }
 
   const toggleSelection = (id: string): void => {
@@ -1518,6 +1542,15 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
             </button>
             <button
               type="button"
+              onClick={handleOpenTableSettings}
+              disabled={!activeTable}
+              className="inline-flex items-center gap-1 rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              Редактировать
+            </button>
+            <button
+              type="button"
               onClick={handleExportTableCsv}
               disabled={!activeTable?.rows.length}
               className="rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
@@ -1560,39 +1593,74 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
           </div>
 
           {activeTable ? (
-            <div className="flex flex-wrap items-center gap-3">
-              <input
-                value={activeTable.name}
-                onChange={(event) => handleRenameActiveTable(event.target.value)}
-                placeholder="Название таблицы"
-                className="w-56 rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-blue-500"
-              />
-
-              <div className="flex flex-wrap items-center gap-1.5">
-                {TABLE_ICON_KEYS.map((key) => {
-                  const Icon = TABLE_ICON_COMPONENTS[key]
-                  const isSelected = activeTable.iconKey === key
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() => handleChangeActiveTableIcon(key)}
-                      className={[
-                        'rounded-md border p-1.5 transition',
-                        isSelected
-                          ? 'border-blue-300 bg-blue-50 text-blue-700'
-                          : 'border-zinc-300 bg-white text-zinc-600 hover:bg-zinc-100'
-                      ].join(' ')}
-                      title={key}
-                    >
-                      <Icon className="h-3.5 w-3.5" />
-                    </button>
-                  )
-                })}
-              </div>
+            <div className="text-xs text-zinc-600">
+              Активная таблица: <span className="font-medium text-zinc-800">{activeTable.name}</span>
             </div>
           ) : null}
         </div>
+
+        {isTableSettingsOpen && activeTable ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+            <div className="w-full max-w-2xl rounded-xl border border-zinc-200 bg-white p-4 shadow-xl">
+              <div className="mb-3 text-sm font-semibold text-zinc-900">Редактирование таблицы</div>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-zinc-700">Название таблицы</label>
+                  <input
+                    value={tableSettingsDraft.name}
+                    onChange={(event) =>
+                      setTableSettingsDraft((prev) => ({ ...prev, name: event.target.value }))
+                    }
+                    className="w-full rounded-md border border-zinc-300 px-2 py-2 text-sm outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-zinc-700">Иконка таблицы</label>
+                  <div className="flex max-h-44 flex-wrap gap-1.5 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-2">
+                    {TABLE_ICON_KEYS.map((key) => {
+                      const Icon = TABLE_ICON_COMPONENTS[key]
+                      const isSelected = tableSettingsDraft.iconKey === key
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => setTableSettingsDraft((prev) => ({ ...prev, iconKey: key }))}
+                          className={[
+                            'rounded-md border p-1.5 transition',
+                            isSelected
+                              ? 'border-blue-300 bg-blue-50 text-blue-700'
+                              : 'border-zinc-300 bg-white text-zinc-600 hover:bg-zinc-100'
+                          ].join(' ')}
+                        >
+                          <Icon className="h-4 w-4" />
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsTableSettingsOpen(false)}
+                  className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs text-zinc-700 hover:bg-zinc-100"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveTableSettings}
+                  className="rounded-md border border-blue-600 bg-blue-600 px-3 py-1.5 text-xs text-white hover:bg-blue-700"
+                >
+                  Сохранить
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {!activeTable?.rows.length ? (
           <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50 px-4 py-5 text-sm text-zinc-500">
@@ -1603,7 +1671,9 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
             <table className="min-w-full border-collapse text-xs">
               <thead className="bg-zinc-50 text-zinc-700">
                 <tr>
-                  <th className="w-44 border-b border-zinc-200 px-3 py-2 text-left font-semibold">№</th>
+                  <th className="w-72 min-w-[18rem] border-b border-zinc-200 px-3 py-2 text-left font-semibold">
+                    №
+                  </th>
                   <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">
                     Комментарий
                   </th>
@@ -1622,7 +1692,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
               <tbody>
                 {activeTable.rows.map((row, rowIndex) => (
                   <tr key={row.id} className="odd:bg-white even:bg-zinc-50/40">
-                    <td className="w-44 border-b border-zinc-100 px-3 py-2 align-top text-zinc-700">
+                    <td className="w-72 min-w-[18rem] border-b border-zinc-100 px-3 py-2 align-middle text-zinc-700">
                       <div className="flex items-center gap-2">
                         <span
                           className="h-3 w-3 rounded-sm border border-zinc-300"
@@ -1630,9 +1700,11 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
                         />
                         <span className="font-medium">{rowIndex + 1}</span>
                       </div>
-                      <div className="mt-1 text-[11px] text-zinc-500">{row.sourceLabel}</div>
+                      <div className="mt-1 break-words text-[11px] leading-4 text-zinc-500">
+                        {row.sourceLabel}
+                      </div>
                     </td>
-                    <td className="border-b border-zinc-100 px-3 py-2 align-top">
+                    <td className="border-b border-zinc-100 px-3 py-2 align-middle">
                       <input
                         value={row.comment}
                         onChange={(event) => handleCommentChange(row.id, event.target.value)}
@@ -1640,7 +1712,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
                         className="w-56 rounded-md border border-zinc-300 px-2 py-1 text-xs outline-none focus:border-blue-500"
                       />
                     </td>
-                    <td className="border-b border-zinc-100 px-3 py-2 align-top">
+                    <td className="border-b border-zinc-100 px-3 py-2 align-middle">
                       <button
                         type="button"
                         onClick={() => handleDeleteRow(row.id)}
@@ -1652,7 +1724,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
                     {wavelengthColumns.map((_, index) => (
                       <td
                         key={`${row.id}-val-${index}`}
-                        className="border-b border-zinc-100 px-2 py-2 text-right text-zinc-700 whitespace-nowrap"
+                        className="border-b border-zinc-100 px-2 py-2 align-middle text-right text-zinc-700 whitespace-nowrap"
                       >
                         <input
                           value={(row.values[index] ?? 0).toFixed(6)}
