@@ -9,6 +9,7 @@ import {
   YAxis
 } from 'recharts'
 import { jsPDF } from 'jspdf'
+import * as XLSX from 'xlsx'
 import { usePixelViewer } from '../model/usePixelViewer'
 
 type Props = {
@@ -632,6 +633,56 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
     )
   }
 
+  const handleExportTableCsv = (): void => {
+    if (!tableRows.length) return
+
+    const stamp = getTimestampForFilename(new Date())
+    const filename = `pixel-viewer-table-${stamp}.csv`
+
+    const header = [
+      escapeCsvCell('№'),
+      escapeCsvCell('Комментарий'),
+      ...wavelengthColumns.map((wavelength) => escapeCsvCell(`${Math.round(wavelength)} нм`))
+    ].join(',')
+
+    const lines = tableRows.map((row, index) => {
+      const cells: string[] = []
+      cells.push(escapeCsvCell(String(index + 1)))
+      cells.push(escapeCsvCell(row.comment ?? ''))
+      for (let i = 0; i < wavelengthColumns.length; i += 1) {
+        cells.push(escapeCsvCell(String(row.values[i] ?? 0)))
+      }
+      return cells.join(',')
+    })
+
+    const csv = [header, ...lines].join('\\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+    downloadBlob(blob, filename)
+  }
+
+  const handleExportTableExcel = (): void => {
+    if (!tableRows.length) return
+
+    const stamp = getTimestampForFilename(new Date())
+    const filename = `pixel-viewer-table-${stamp}.xlsx`
+
+    const headerRow: Array<string | number> = [
+      '№',
+      'Комментарий',
+      ...wavelengthColumns.map((wavelength) => `${Math.round(wavelength)} нм`)
+    ]
+
+    const dataRows: Array<Array<string | number>> = tableRows.map((row, index) => {
+      const values = wavelengthColumns.map((_, i) => Number(row.values[i] ?? 0))
+      return [index + 1, row.comment ?? '', ...values]
+    })
+
+    const sheet = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows])
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Данные')
+    XLSX.writeFile(workbook, filename)
+  }
+
   const chartModel = useMemo(() => {
     if (!cube) return null
 
@@ -1152,11 +1203,32 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
       </div>
 
       <div className="rounded-2xl border border-zinc-200 bg-white p-4">
-        <div className="mb-3">
-          <h3 className="text-sm font-semibold text-zinc-900">Таблица данных</h3>
-          <p className="mt-1 text-xs text-zinc-500">
-            ПКМ по выделению → добавить точку или среднюю линии области в таблицу
-          </p>
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-zinc-900">Таблица данных</h3>
+            <p className="mt-1 text-xs text-zinc-500">
+              ПКМ по выделению → добавить точку или среднюю линии области в таблицу
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleExportTableCsv}
+              disabled={!tableRows.length}
+              className="rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              CSV
+            </button>
+            <button
+              type="button"
+              onClick={handleExportTableExcel}
+              disabled={!tableRows.length}
+              className="rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Excel
+            </button>
+          </div>
         </div>
 
         {!tableRows.length ? (

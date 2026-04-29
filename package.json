@@ -30,7 +30,8 @@
     "npyjs": "^1.1.0",
     "react-router-dom": "^7.14.1",
     "recharts": "^3.8.1",
-    "tailwindcss": "^4.2.2"
+    "tailwindcss": "^4.2.2",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "^3.0.0",
