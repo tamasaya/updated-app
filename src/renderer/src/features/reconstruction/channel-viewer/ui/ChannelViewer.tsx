@@ -1,4 +1,13 @@
-import { JSX, useState } from 'react'
+import { JSX, useMemo, useState } from 'react'
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis
+} from 'recharts'
 import { useChannelViewer, RgbMode, Normalization, Contrast } from '../model/useChannelViewer'
 
 type Props = {
@@ -8,21 +17,72 @@ type Props = {
 const WAVELENGTH_START_NM = 400
 const WAVELENGTH_END_NM = 700
 
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer)
-  let binary = ''
+function buildAverageSpectrumRows(
+  cube: NonNullable<ReturnType<typeof useChannelViewer>['cube']>,
+  wavelengthStartNm: number,
+  wavelengthEndNm: number
+): Array<{ wavelength: number; intensity: number }> {
+  const [height, width, channels] = cube.shape
+  if (!height || !width || !channels) return []
 
-  const chunkSize = 0x8000
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, i + chunkSize)
-    binary += String.fromCharCode(...chunk)
+  const sums = new Array(channels).fill(0)
+  const pixelCount = height * width
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * channels
+
+      for (let c = 0; c < channels; c += 1) {
+        sums[c] += Number(cube.data[offset + c])
+      }
+    }
   }
 
-  return btoa(binary)
+  return sums.map((sum, index) => {
+    const wavelength =
+      channels === 1
+        ? wavelengthStartNm
+        : wavelengthStartNm + (index / (channels - 1)) * (wavelengthEndNm - wavelengthStartNm)
+
+    return {
+      wavelength,
+      intensity: sum / Math.max(pixelCount, 1)
+    }
+  })
 }
 
-function arrayBufferToPngDataUrl(buffer: ArrayBuffer): string {
-  return `data:image/png;base64,${arrayBufferToBase64(buffer)}`
+function buildSelectedChannelAverageRows(
+  cube: NonNullable<ReturnType<typeof useChannelViewer>['cube']>,
+  selectedChannel: number,
+  wavelengthStartNm: number,
+  wavelengthEndNm: number
+): Array<{ wavelength: number; intensity: number }> {
+  const [height, width, channels] = cube.shape
+  if (!height || !width || !channels) return []
+
+  const safeChannel = Math.max(0, Math.min(selectedChannel, channels - 1))
+  const pixelCount = height * width
+
+  let sum = 0
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * channels
+      sum += Number(cube.data[offset + safeChannel])
+    }
+  }
+
+  const wavelength =
+    channels === 1
+      ? wavelengthStartNm
+      : wavelengthStartNm + (safeChannel / (channels - 1)) * (wavelengthEndNm - wavelengthStartNm)
+
+  return [
+    {
+      wavelength,
+      intensity: sum / Math.max(pixelCount, 1)
+    }
+  ]
 }
 
 export function ChannelViewer({ npyPath }: Props): JSX.Element {
@@ -45,41 +105,22 @@ export function ChannelViewer({ npyPath }: Props): JSX.Element {
     rgbImageDataUrl
   } = useChannelViewer(npyPath)
 
-  const [chartDataUrl, setChartDataUrl] = useState<string | null>(null)
-  const [chartError, setChartError] = useState<string | null>(null)
-  const [chartLoading, setChartLoading] = useState(false)
+  const [showWholeCubeSpectrum, setShowWholeCubeSpectrum] = useState(true)
 
-  const handleBuildChart = async () => {
-    if (!npyPath) return
+  const spectrumRows = useMemo(() => {
+    if (!cube) return []
 
-    setChartLoading(true)
-    setChartError(null)
-
-    try {
-      const result = await window.reconstructionApi.runSeabornChart(npyPath, {
-        type: 'global-average',
-        wavelengthStartNm: WAVELENGTH_START_NM,
-        wavelengthEndNm: WAVELENGTH_END_NM
-      })
-
-      if (!result?.ok || !result.outputPath) {
-        setChartDataUrl(null)
-        setChartError(result?.error ?? 'Не удалось построить график')
-        return
-      }
-
-      const file = await window.reconstructionApi.readImageFile(result.outputPath)
-      const dataUrl = arrayBufferToPngDataUrl(file.bytes)
-
-      setChartDataUrl(dataUrl)
-      setChartError(null)
-    } catch (nextError) {
-      setChartDataUrl(null)
-      setChartError(nextError instanceof Error ? nextError.message : String(nextError))
-    } finally {
-      setChartLoading(false)
+    if (showWholeCubeSpectrum) {
+      return buildAverageSpectrumRows(cube, WAVELENGTH_START_NM, WAVELENGTH_END_NM)
     }
-  }
+
+    return buildSelectedChannelAverageRows(
+      cube,
+      selectedChannel,
+      WAVELENGTH_START_NM,
+      WAVELENGTH_END_NM
+    )
+  }, [cube, selectedChannel, showWholeCubeSpectrum])
 
   if (!npyPath) {
     return <div className="text-sm text-zinc-500">Сначала запустите реконструкцию.</div>
@@ -141,6 +182,8 @@ export function ChannelViewer({ npyPath }: Props): JSX.Element {
                 className="w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
               />
             </div>
+
+            <div className="h-15" />
           </div>
 
           <div className="mt-4 overflow-hidden rounded-2xl border border-zinc-200 bg-white p-4">
@@ -264,36 +307,54 @@ export function ChannelViewer({ npyPath }: Props): JSX.Element {
       </div>
 
       <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
-        <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h3 className="text-sm font-medium text-zinc-800">График среднего спектра</h3>
-            <p className="mt-1 text-sm text-zinc-600">Средний спектр по всему спектральному кубу</p>
+            <h3 className="text-sm font-medium text-zinc-800">График спектра</h3>
+            <p className="mt-1 text-sm text-zinc-600">
+              {showWholeCubeSpectrum
+                ? 'Средний спектр по всему спектральному кубу'
+                : `Средняя интенсивность для выбранного канала ${selectedChannel}`}
+            </p>
           </div>
-
-          <button
-            onClick={handleBuildChart}
-            disabled={chartLoading}
-            className="rounded-xl bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {chartLoading ? 'Построение...' : 'Построить спектр'}
-          </button>
         </div>
 
-        {chartError && (
-          <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {chartError}
+        {spectrumRows.length ? (
+          <div className="h-[360px] rounded-xl border border-zinc-200 bg-white p-3">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={spectrumRows} margin={{ top: 12, right: 20, left: 8, bottom: 8 }}>
+                <CartesianGrid stroke="#e4e4e7" strokeDasharray="4 4" />
+                <XAxis
+                  dataKey="wavelength"
+                  type="number"
+                  domain={['dataMin', 'dataMax']}
+                  tick={{ fontSize: 12 }}
+                  tickFormatter={(value) => `${Math.round(Number(value))} нм`}
+                />
+                <YAxis tick={{ fontSize: 12 }} />
+                <Tooltip
+                  formatter={(value: number) => [Number(value).toFixed(6), 'Интенсивность']}
+                  labelFormatter={(label) => `${Math.round(Number(label))} нм`}
+                  contentStyle={{
+                    borderRadius: 12,
+                    border: '1px solid #e4e4e7',
+                    backgroundColor: '#ffffff'
+                  }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="intensity"
+                  stroke="#111827"
+                  strokeWidth={2.5}
+                  dot={showWholeCubeSpectrum ? false : { r: 5, fill: '#111827' }}
+                  activeDot={{ r: 5 }}
+                  isAnimationActive={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
           </div>
-        )}
-
-        {chartDataUrl ? (
-          <img
-            src={chartDataUrl}
-            alt="Средний спектр по всему кубу"
-            className="block w-full rounded-xl border border-zinc-200 bg-white"
-          />
         ) : (
           <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-4 py-8 text-sm text-zinc-500">
-            Нажмите «Построить спектр», чтобы построить средний спектр по всему кубу.
+            Нет данных для построения среднего спектра.
           </div>
         )}
       </div>
