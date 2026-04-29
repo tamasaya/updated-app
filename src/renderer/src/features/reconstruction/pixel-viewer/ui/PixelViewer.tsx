@@ -206,11 +206,6 @@ function mixWithWhite(hex: string, amount: number): string {
   return `rgb(${mixedR}, ${mixedG}, ${mixedB})`
 }
 
-function withAlpha(hex: string, alpha: number): string {
-  const { r, g, b } = hexToRgb(hex)
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`
-}
-
 export function PixelViewer({ npyPath }: Props): JSX.Element {
   const {
     isLoading,
@@ -224,6 +219,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
 
   const [points, setPoints] = useState<Point[]>([])
   const [regions, setRegions] = useState<Region[]>([])
+  const [enabledSelectionIds, setEnabledSelectionIds] = useState<Set<string>>(() => new Set())
   const [draftSelection, setDraftSelection] = useState<DraftSelection>(null)
   const [averageMode, setAverageMode] = useState<'show' | 'hide'>('show')
 
@@ -233,6 +229,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
   useEffect(() => {
     setPoints([])
     setRegions([])
+    setEnabledSelectionIds(new Set())
     setDraftSelection(null)
     setAverageMode('show')
   }, [npyPath])
@@ -291,6 +288,28 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
     return item?.color ?? '#38bdf8'
   }
 
+  const enabledPoints = useMemo(
+    () => points.filter((point) => enabledSelectionIds.has(point.id)),
+    [points, enabledSelectionIds]
+  )
+
+  const enabledRegions = useMemo(
+    () => regions.filter((region) => enabledSelectionIds.has(region.id)),
+    [regions, enabledSelectionIds]
+  )
+
+  const toggleSelection = (id: string): void => {
+    setEnabledSelectionIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
   const getImageCoords = (event: React.PointerEvent<HTMLDivElement>): { x: number; y: number } => {
     const rect = imageFrameRef.current?.getBoundingClientRect()
 
@@ -320,9 +339,15 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
 
       if (selection.additive) {
         setPoints((prev) => [...prev, point])
+        setEnabledSelectionIds((prev) => {
+          const next = new Set(prev)
+          next.add(point.id)
+          return next
+        })
       } else {
         setPoints([point])
         setRegions([])
+        setEnabledSelectionIds(new Set([point.id]))
       }
 
       return
@@ -338,9 +363,15 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
 
     if (selection.additive) {
       setRegions((prev) => [...prev, region])
+      setEnabledSelectionIds((prev) => {
+        const next = new Set(prev)
+        next.add(region.id)
+        return next
+      })
     } else {
       setRegions([region])
       setPoints([])
+      setEnabledSelectionIds(new Set([region.id]))
     }
   }
 
@@ -389,17 +420,18 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
   const clearSelection = (): void => {
     setPoints([])
     setRegions([])
+    setEnabledSelectionIds(new Set())
     setDraftSelection(null)
   }
 
   const chartModel = useMemo(() => {
-    if (!cube || (points.length === 0 && regions.length === 0)) {
+    if (!cube || (enabledPoints.length === 0 && enabledRegions.length === 0)) {
       return null
     }
 
     const wavelengths = buildWavelengths(channels)
 
-    const pointSeries: Series[] = points.map((point, index) => {
+    const pointSeries: Series[] = enabledPoints.map((point, index) => {
       const baseColor = POINT_COLORS[index % POINT_COLORS.length]
 
       return {
@@ -415,7 +447,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
       }
     })
 
-    const regionSampleSeries: Series[] = regions.flatMap((region, regionIndex) => {
+    const regionSampleSeries: Series[] = enabledRegions.flatMap((region, regionIndex) => {
       const sampledPoints = sampleRegionPoints(region, MAX_REGION_LINES)
       const baseColor = REGION_COLORS[regionIndex % REGION_COLORS.length]
       const sampleColor = mixWithWhite(baseColor, 0.45)
@@ -433,7 +465,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
       }))
     })
 
-    const regionMeanSeries: Series[] = regions.map((region, regionIndex) => {
+    const regionMeanSeries: Series[] = enabledRegions.map((region, regionIndex) => {
       const baseColor = REGION_COLORS[regionIndex % REGION_COLORS.length]
 
       return {
@@ -449,7 +481,8 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
       }
     })
 
-    const shouldShowGlobalMean = averageMode === 'show' && points.length > 0 && regions.length === 0
+    const shouldShowGlobalMean =
+      averageMode === 'show' && enabledPoints.length > 0 && enabledRegions.length === 0
 
     const globalMeanSeries: Series[] = shouldShowGlobalMean
       ? [
@@ -478,7 +511,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
       rows: buildChartRows(wavelengths, allSeries),
       series: allSeries
     }
-  }, [cube, points, regions, averageMode, channels])
+  }, [cube, enabledPoints, enabledRegions, averageMode, channels])
 
   const selectedRects =
     pixelScale &&
@@ -533,6 +566,8 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
   if (!cube) {
     return <div className="text-sm text-zinc-500">Данные не загружены.</div>
   }
+
+  const hasAnySelection = points.length > 0 || regions.length > 0
 
   return (
     <div className="space-y-6">
@@ -683,16 +718,26 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
 
           <div className="flex flex-wrap gap-2">
             {selectionLegend.map((item) => (
-              <span
+              <button
                 key={item.id}
-                className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs text-zinc-700"
+                type="button"
+                onClick={() => toggleSelection(item.id)}
+                aria-pressed={enabledSelectionIds.has(item.id)}
+                className={[
+                  'inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs',
+                  enabledSelectionIds.has(item.id)
+                    ? 'border-zinc-200 bg-zinc-50 text-zinc-700'
+                    : 'border-zinc-200 bg-zinc-100 text-zinc-400 opacity-70'
+                ].join(' ')}
               >
                 <span
                   className="h-2.5 w-2.5 rounded-full"
                   style={{ backgroundColor: item.color }}
                 />
-                {item.label}
-              </span>
+                <span className={enabledSelectionIds.has(item.id) ? '' : 'line-through'}>
+                  {item.label}
+                </span>
+              </button>
             ))}
           </div>
         </div>
@@ -708,13 +753,15 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
           </div>
 
           <div className="text-xs text-zinc-500">
-            Точек: {points.length} · Областей: {regions.length}
+            Точек: {enabledPoints.length} · Областей: {enabledRegions.length}
           </div>
         </div>
 
         {!chartModel ? (
           <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50 px-4 py-6 text-sm text-zinc-500">
-            Выберите хотя бы одну точку или область на изображении.
+            {hasAnySelection
+              ? 'Ни одно выделение не включено. Включите хотя бы одну точку или область.'
+              : 'Выберите хотя бы одну точку или область на изображении.'}
           </div>
         ) : (
           <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
