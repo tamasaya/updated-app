@@ -782,27 +782,12 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
               />
             </div>
 
-            <div>
-              <label className="mb-1 block text-sm font-medium text-zinc-800">
-                Усреднённая линия
-              </label>
-
-              <select
-                value={averageMode}
-                onChange={(event) => setAverageMode(event.target.value as 'show' | 'hide')}
-                className="w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
-              >
-                <option value="show">Показывать</option>
-                <option value="hide">Скрывать</option>
-              </select>
-            </div>
-
             <button
               type="button"
               onClick={clearSelection}
               className="w-full rounded-xl border border-zinc-300 bg-white px-4 py-2.5 text-sm font-medium text-zinc-800 transition hover:bg-zinc-100"
             >
-              Очистить выделения
+              Очистить
             </button>
           </div>
 
@@ -926,6 +911,20 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
           </div>
 
           <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+              <label className="mb-1 block text-sm font-medium text-zinc-800">
+                Усреднённая линия
+              </label>
+
+              <select
+                value={averageMode}
+                onChange={(event) => setAverageMode(event.target.value as 'show' | 'hide')}
+                className="w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+              >
+                <option value="show">Показывать</option>
+                <option value="hide">Скрывать</option>
+              </select>
+            </div>
             <div className="text-xs text-zinc-500">
               Точек: {enabledPointsCount} · Областей: {enabledRegionsCount}
             </div>
