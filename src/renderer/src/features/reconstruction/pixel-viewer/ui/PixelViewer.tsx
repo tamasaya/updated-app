@@ -8,6 +8,7 @@ import {
   XAxis,
   YAxis
 } from 'recharts'
+import { jsPDF } from 'jspdf'
 import { usePixelViewer } from '../model/usePixelViewer'
 
 type Props = {
@@ -173,6 +174,128 @@ function buildChartRows(wavelengths: number[], series: Series[]): Record<string,
   })
 }
 
+function getTimestampForFilename(date: Date): string {
+  // Windows-safe ISO-ish string: replace ":" with "-"
+  return date.toISOString().slice(0, 19).replaceAll(':', '-')
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1500)
+}
+
+function escapeCsvCell(value: string): string {
+  const mustQuote = value.includes('"') || value.includes(',') || value.includes('\n') || value.includes('\r')
+  if (!mustQuote) return value
+  return `"${value.replaceAll('"', '""')}"`
+}
+
+function getSvgSize(svgEl: SVGSVGElement): { width: number; height: number } {
+  const rect = svgEl.getBoundingClientRect()
+  if (rect.width > 0 && rect.height > 0) return { width: rect.width, height: rect.height }
+
+  const viewBox = svgEl.getAttribute('viewBox')
+  if (viewBox) {
+    const parts = viewBox.split(/\s+/).map((v) => Number(v))
+    // "minX minY width height"
+    if (parts.length === 4 && parts[2] > 0 && parts[3] > 0) {
+      return { width: parts[2], height: parts[3] }
+    }
+  }
+
+  const widthAttr = Number(svgEl.getAttribute('width') ?? 0)
+  const heightAttr = Number(svgEl.getAttribute('height') ?? 0)
+  if (widthAttr > 0 && heightAttr > 0) return { width: widthAttr, height: heightAttr }
+
+  return { width: 800, height: 420 }
+}
+
+async function renderSvgToCanvas(svgEl: SVGSVGElement, scale: number): Promise<HTMLCanvasElement> {
+  const size = getSvgSize(svgEl)
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Canvas 2D context is not available')
+
+  canvas.width = Math.max(1, Math.round(size.width * scale))
+  canvas.height = Math.max(1, Math.round(size.height * scale))
+
+  const cloned = svgEl.cloneNode(true) as SVGSVGElement
+  cloned.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+  cloned.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink')
+
+  // Some charts rely on styles computed by the browser; serializing SVG directly is usually enough for Recharts.
+  const serialized = new XMLSerializer().serializeToString(cloned)
+  const svgDataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(serialized)}`
+
+  const img = new Image()
+  img.decoding = 'async'
+
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve()
+    img.onerror = () => reject(new Error('Failed to load serialized SVG'))
+    img.src = svgDataUrl
+  })
+
+  // Ensure white background (PDF/PNG viewers usually expect it)
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+
+  return canvas
+}
+
+async function exportSvgAsPng(svgEl: SVGSVGElement, filename: string, scale = 2): Promise<void> {
+  const canvas = await renderSvgToCanvas(svgEl, scale)
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob((b) => resolve(b), 'image/png'))
+  if (blob) {
+    downloadBlob(blob, filename)
+    return
+  }
+
+  const dataUrl = canvas.toDataURL('image/png')
+  const anchor = document.createElement('a')
+  anchor.href = dataUrl
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+}
+
+async function exportSvgAsPdf(svgEl: SVGSVGElement, filename: string, scale = 2): Promise<void> {
+  const canvas = await renderSvgToCanvas(svgEl, scale)
+  const imgData = canvas.toDataURL('image/png')
+
+  const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
+
+  const pageW = pdf.internal.pageSize.getWidth()
+  const pageH = pdf.internal.pageSize.getHeight()
+  const padding = 16
+
+  const imgW = canvas.width
+  const imgH = canvas.height
+  const imgAspect = imgW / Math.max(1, imgH)
+
+  let renderW = pageW - padding * 2
+  let renderH = renderW / imgAspect
+
+  if (renderH > pageH - padding * 2) {
+    renderH = pageH - padding * 2
+    renderW = renderH * imgAspect
+  }
+
+  const x = (pageW - renderW) / 2
+  const y = (pageH - renderH) / 2
+
+  pdf.addImage(imgData, 'PNG', x, y, renderW, renderH)
+  pdf.save(filename)
+}
+
 const POINT_COLORS = ['#0ea5e9', '#f97316', '#ef4444', '#14b8a6', '#eab308']
 const REGION_COLORS = ['#22c55e', '#a855f7', '#ec4899', '#84cc16', '#06b6d4']
 const GLOBAL_MEAN_COLOR = '#111827'
@@ -224,6 +347,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
   const [averageMode, setAverageMode] = useState<'show' | 'hide'>('show')
 
   const imageFrameRef = useRef<HTMLDivElement>(null)
+  const chartContainerRef = useRef<HTMLDivElement>(null)
   const [frameSize, setFrameSize] = useState({ width: 0, height: 0 })
 
   useEffect(() => {
@@ -288,14 +412,14 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
     return item?.color ?? '#38bdf8'
   }
 
-  const enabledPoints = useMemo(
-    () => points.filter((point) => enabledSelectionIds.has(point.id)),
-    [points, enabledSelectionIds]
+  const enabledPointsCount = points.reduce(
+    (acc, point) => acc + (enabledSelectionIds.has(point.id) ? 1 : 0),
+    0
   )
 
-  const enabledRegions = useMemo(
-    () => regions.filter((region) => enabledSelectionIds.has(region.id)),
-    [regions, enabledSelectionIds]
+  const enabledRegionsCount = regions.reduce(
+    (acc, region) => acc + (enabledSelectionIds.has(region.id) ? 1 : 0),
+    0
   )
 
   const toggleSelection = (id: string): void => {
@@ -425,9 +549,12 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
   }
 
   const chartModel = useMemo(() => {
-    if (!cube || (enabledPoints.length === 0 && enabledRegions.length === 0)) {
-      return null
-    }
+    if (!cube) return null
+
+    const enabledPoints = points.filter((point) => enabledSelectionIds.has(point.id))
+    const enabledRegions = regions.filter((region) => enabledSelectionIds.has(region.id))
+
+    if (enabledPoints.length === 0 && enabledRegions.length === 0) return null
 
     const wavelengths = buildWavelengths(channels)
 
@@ -511,7 +638,53 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
       rows: buildChartRows(wavelengths, allSeries),
       series: allSeries
     }
-  }, [cube, enabledPoints, enabledRegions, averageMode, channels])
+  }, [cube, points, regions, enabledSelectionIds, averageMode, channels])
+
+  const handleExportPng = async (): Promise<void> => {
+    if (!chartModel) return
+    const svgEl = chartContainerRef.current?.querySelector('svg') as SVGSVGElement | null
+    if (!svgEl) return
+
+    const filename = `pixel-viewer-graph-${getTimestampForFilename(new Date())}.png`
+    await exportSvgAsPng(svgEl, filename, 2)
+  }
+
+  const handleExportPdf = async (): Promise<void> => {
+    if (!chartModel) return
+    const svgEl = chartContainerRef.current?.querySelector('svg') as SVGSVGElement | null
+    if (!svgEl) return
+
+    const filename = `pixel-viewer-graph-${getTimestampForFilename(new Date())}.pdf`
+    await exportSvgAsPdf(svgEl, filename, 2)
+  }
+
+  const handleExportCsv = (): void => {
+    if (!chartModel) return
+
+    const stamp = getTimestampForFilename(new Date())
+    const filename = `pixel-viewer-graph-${stamp}.csv`
+
+    const series = chartModel.series
+    const columns: Array<{ key: string; label: string }> = [
+      { key: 'wavelength', label: 'wavelength_nm' },
+      ...series.map((s) => ({ key: s.id, label: s.label }))
+    ]
+
+    const header = columns.map((c) => escapeCsvCell(c.label)).join(',')
+    const lines = chartModel.rows.map((row) => {
+      const wavelength = Number((row as Record<string, number>).wavelength)
+      const cells = columns.map((c) => {
+        if (c.key === 'wavelength') return escapeCsvCell(String(wavelength))
+        const value = Number((row as Record<string, number>)[c.key] ?? 0)
+        return escapeCsvCell(String(value))
+      })
+      return cells.join(',')
+    })
+
+    const csv = [header, ...lines].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+    downloadBlob(blob, filename)
+  }
 
   const selectedRects =
     pixelScale &&
@@ -752,8 +925,37 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
             </p>
           </div>
 
-          <div className="text-xs text-zinc-500">
-            Точек: {enabledPoints.length} · Областей: {enabledRegions.length}
+          <div className="flex items-center gap-3">
+            <div className="text-xs text-zinc-500">
+              Точек: {enabledPointsCount} · Областей: {enabledRegionsCount}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void handleExportPng()}
+                disabled={!chartModel}
+                className="rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                PNG
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleExportPdf()}
+                disabled={!chartModel}
+                className="rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                PDF
+              </button>
+              <button
+                type="button"
+                onClick={handleExportCsv}
+                disabled={!chartModel}
+                className="rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                CSV
+              </button>
+            </div>
           </div>
         </div>
 
@@ -765,7 +967,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
           </div>
         ) : (
           <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
-            <div className="h-[420px] w-full">
+            <div ref={chartContainerRef} className="h-[420px] w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart
                   data={chartModel.rows}

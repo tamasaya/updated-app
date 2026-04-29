@@ -1,4 +1,4 @@
-import { JSX, useMemo, useState } from 'react'
+import { JSX, useMemo, useRef, useState } from 'react'
 import {
   CartesianGrid,
   Line,
@@ -8,6 +8,7 @@ import {
   XAxis,
   YAxis
 } from 'recharts'
+import { jsPDF } from 'jspdf'
 import { useChannelViewer, RgbMode, Normalization, Contrast } from '../model/useChannelViewer'
 
 type Props = {
@@ -85,6 +86,127 @@ function buildSelectedChannelAverageRows(
   ]
 }
 
+function getTimestampForFilename(date: Date): string {
+  // Windows-safe ISO-ish string: replace ":" with "-"
+  return date.toISOString().slice(0, 19).replaceAll(':', '-')
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1500)
+}
+
+function escapeCsvCell(value: string): string {
+  const mustQuote = value.includes('"') || value.includes(',') || value.includes('\n') || value.includes('\r')
+  if (!mustQuote) return value
+  return `"${value.replaceAll('"', '""')}"`
+}
+
+function getSvgSize(svgEl: SVGSVGElement): { width: number; height: number } {
+  const rect = svgEl.getBoundingClientRect()
+  if (rect.width > 0 && rect.height > 0) return { width: rect.width, height: rect.height }
+
+  const viewBox = svgEl.getAttribute('viewBox')
+  if (viewBox) {
+    const parts = viewBox.split(/\s+/).map((v) => Number(v))
+    // "minX minY width height"
+    if (parts.length === 4 && parts[2] > 0 && parts[3] > 0) {
+      return { width: parts[2], height: parts[3] }
+    }
+  }
+
+  const widthAttr = Number(svgEl.getAttribute('width') ?? 0)
+  const heightAttr = Number(svgEl.getAttribute('height') ?? 0)
+  if (widthAttr > 0 && heightAttr > 0) return { width: widthAttr, height: heightAttr }
+
+  return { width: 800, height: 360 }
+}
+
+async function renderSvgToCanvas(svgEl: SVGSVGElement, scale: number): Promise<HTMLCanvasElement> {
+  const size = getSvgSize(svgEl)
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Canvas 2D context is not available')
+
+  canvas.width = Math.max(1, Math.round(size.width * scale))
+  canvas.height = Math.max(1, Math.round(size.height * scale))
+
+  const cloned = svgEl.cloneNode(true) as SVGSVGElement
+  cloned.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+  cloned.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink')
+
+  const serialized = new XMLSerializer().serializeToString(cloned)
+  const svgDataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(serialized)}`
+
+  const img = new Image()
+  img.decoding = 'async'
+
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve()
+    img.onerror = () => reject(new Error('Failed to load serialized SVG'))
+    img.src = svgDataUrl
+  })
+
+  // Ensure white background for PNG/PDF
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+
+  return canvas
+}
+
+async function exportSvgAsPng(svgEl: SVGSVGElement, filename: string, scale = 2): Promise<void> {
+  const canvas = await renderSvgToCanvas(svgEl, scale)
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob((b) => resolve(b), 'image/png'))
+  if (blob) {
+    downloadBlob(blob, filename)
+    return
+  }
+
+  const dataUrl = canvas.toDataURL('image/png')
+  const anchor = document.createElement('a')
+  anchor.href = dataUrl
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+}
+
+async function exportSvgAsPdf(svgEl: SVGSVGElement, filename: string, scale = 2): Promise<void> {
+  const canvas = await renderSvgToCanvas(svgEl, scale)
+  const imgData = canvas.toDataURL('image/png')
+
+  const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' })
+
+  const pageW = pdf.internal.pageSize.getWidth()
+  const pageH = pdf.internal.pageSize.getHeight()
+  const padding = 16
+
+  const imgW = canvas.width
+  const imgH = canvas.height
+  const imgAspect = imgW / Math.max(1, imgH)
+
+  let renderW = pageW - padding * 2
+  let renderH = renderW / imgAspect
+
+  if (renderH > pageH - padding * 2) {
+    renderH = pageH - padding * 2
+    renderW = renderH * imgAspect
+  }
+
+  const x = (pageW - renderW) / 2
+  const y = (pageH - renderH) / 2
+
+  pdf.addImage(imgData, 'PNG', x, y, renderW, renderH)
+  pdf.save(filename)
+}
+
 export function ChannelViewer({ npyPath }: Props): JSX.Element {
   const {
     isLoading,
@@ -121,6 +243,43 @@ export function ChannelViewer({ npyPath }: Props): JSX.Element {
       WAVELENGTH_END_NM
     )
   }, [cube, selectedChannel, showWholeCubeSpectrum])
+
+  const chartContainerRef = useRef<HTMLDivElement>(null)
+
+  const handleExportPng = async (): Promise<void> => {
+    if (!spectrumRows.length) return
+    const svgEl = chartContainerRef.current?.querySelector('svg') as SVGSVGElement | null
+    if (!svgEl) return
+
+    const filename = `channel-viewer-graph-${getTimestampForFilename(new Date())}.png`
+    await exportSvgAsPng(svgEl, filename, 2)
+  }
+
+  const handleExportPdf = async (): Promise<void> => {
+    if (!spectrumRows.length) return
+    const svgEl = chartContainerRef.current?.querySelector('svg') as SVGSVGElement | null
+    if (!svgEl) return
+
+    const filename = `channel-viewer-graph-${getTimestampForFilename(new Date())}.pdf`
+    await exportSvgAsPdf(svgEl, filename, 2)
+  }
+
+  const handleExportCsv = (): void => {
+    if (!spectrumRows.length) return
+
+    const filename = `channel-viewer-graph-${getTimestampForFilename(new Date())}.csv`
+    const header = ['wavelength_nm', 'intensity'].join(',')
+
+    const lines = spectrumRows.map((row) => {
+      const wavelength = escapeCsvCell(String(row.wavelength))
+      const intensity = escapeCsvCell(String(row.intensity))
+      return `${wavelength},${intensity}`
+    })
+
+    const csv = [header, ...lines].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+    downloadBlob(blob, filename)
+  }
 
   if (!npyPath) {
     return <div className="text-sm text-zinc-500">Сначала запустите реконструкцию.</div>
@@ -316,10 +475,37 @@ export function ChannelViewer({ npyPath }: Props): JSX.Element {
                 : `Средняя интенсивность для выбранного канала ${selectedChannel}`}
             </p>
           </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void handleExportPng()}
+              disabled={!spectrumRows.length}
+              className="rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              PNG
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleExportPdf()}
+              disabled={!spectrumRows.length}
+              className="rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              PDF
+            </button>
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              disabled={!spectrumRows.length}
+              className="rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              CSV
+            </button>
+          </div>
         </div>
 
         {spectrumRows.length ? (
-          <div className="h-[360px] rounded-xl border border-zinc-200 bg-white p-3">
+          <div ref={chartContainerRef} className="h-[360px] rounded-xl border border-zinc-200 bg-white p-3">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={spectrumRows} margin={{ top: 12, right: 20, left: 8, bottom: 8 }}>
                 <CartesianGrid stroke="#e4e4e7" strokeDasharray="4 4" />
