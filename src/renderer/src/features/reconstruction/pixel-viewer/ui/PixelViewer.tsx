@@ -52,6 +52,15 @@ type Series = {
   strokeDasharray?: string
 }
 
+type TableRow = {
+  id: string
+  sourceId: string
+  sourceLabel: string
+  sourceColor: string
+  values: number[]
+  comment: string
+}
+
 const REGION_THRESHOLD = 3
 const WAVELENGTH_START_NM = 400
 const WAVELENGTH_END_NM = 700
@@ -343,6 +352,12 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
   const [points, setPoints] = useState<Point[]>([])
   const [regions, setRegions] = useState<Region[]>([])
   const [enabledSelectionIds, setEnabledSelectionIds] = useState<Set<string>>(() => new Set())
+  const [tableRows, setTableRows] = useState<TableRow[]>([])
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+    selectionId: string
+  } | null>(null)
   const [draftSelection, setDraftSelection] = useState<DraftSelection>(null)
   const [averageMode, setAverageMode] = useState<'show' | 'hide'>('show')
 
@@ -354,6 +369,8 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
     setPoints([])
     setRegions([])
     setEnabledSelectionIds(new Set())
+    setTableRows([])
+    setContextMenu(null)
     setDraftSelection(null)
     setAverageMode('show')
   }, [npyPath])
@@ -378,6 +395,19 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
       observer.disconnect()
     }
   }, [imageDataUrl, cube])
+
+  useEffect(() => {
+    const closeContextMenu = (): void => setContextMenu(null)
+    window.addEventListener('click', closeContextMenu)
+    window.addEventListener('contextmenu', closeContextMenu)
+    window.addEventListener('scroll', closeContextMenu, true)
+
+    return () => {
+      window.removeEventListener('click', closeContextMenu)
+      window.removeEventListener('contextmenu', closeContextMenu)
+      window.removeEventListener('scroll', closeContextMenu, true)
+    }
+  }, [])
 
   const [height, width, channels] = cube?.shape ?? [0, 0, 0]
 
@@ -545,7 +575,61 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
     setPoints([])
     setRegions([])
     setEnabledSelectionIds(new Set())
+    setContextMenu(null)
     setDraftSelection(null)
+  }
+
+  const handleLegendContextMenu = (
+    event: React.MouseEvent<HTMLButtonElement>,
+    selectionId: string
+  ): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      selectionId
+    })
+  }
+
+  const addSelectionToTable = (selectionId: string): void => {
+    if (!cube) return
+
+    const point = points.find((entry) => entry.id === selectionId)
+    const region = regions.find((entry) => entry.id === selectionId)
+    const legendItem = selectionLegend.find((entry) => entry.id === selectionId)
+    if (!legendItem) return
+
+    let values: number[] | null = null
+    let sourceLabel = legendItem.label
+
+    if (point) {
+      values = getSpectrumAtPoint(cube, point.x, point.y)
+      sourceLabel = `${legendItem.label} (точка)`
+    } else if (region) {
+      values = getRegionMeanSpectrum(cube, region)
+      sourceLabel = `${legendItem.label} (средняя области)`
+    }
+
+    if (!values || values.length === 0) return
+
+    const nextRow: TableRow = {
+      id: createId('table-row'),
+      sourceId: selectionId,
+      sourceLabel,
+      sourceColor: legendItem.color,
+      values,
+      comment: ''
+    }
+
+    setTableRows((prev) => [...prev, nextRow])
+    setContextMenu(null)
+  }
+
+  const handleCommentChange = (rowId: string, value: string): void => {
+    setTableRows((prev) =>
+      prev.map((row) => (row.id === rowId ? { ...row, comment: value } : row))
+    )
   }
 
   const chartModel = useMemo(() => {
@@ -741,6 +825,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
   }
 
   const hasAnySelection = points.length > 0 || regions.length > 0
+  const wavelengthColumns = buildWavelengths(channels)
 
   return (
     <div className="space-y-6">
@@ -880,10 +965,11 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
                 key={item.id}
                 type="button"
                 onClick={() => toggleSelection(item.id)}
+                onContextMenu={(event) => handleLegendContextMenu(event, item.id)}
                 aria-pressed={enabledSelectionIds.has(item.id)}
                 className={[
                   'inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs',
-                  enabledSelectionIds.has(item.id)
+                  enabledSelectionIds.has(item.id)  
                     ? 'border-zinc-200 bg-zinc-50 text-zinc-700'
                     : 'border-zinc-200 bg-zinc-100 text-zinc-400 opacity-70'
                 ].join(' ')}
@@ -898,6 +984,22 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
               </button>
             ))}
           </div>
+        </div>
+      ) : null}
+
+      {contextMenu ? (
+        <div
+          className="fixed z-50 min-w-56 rounded-lg border border-zinc-200 bg-white p-1 shadow-lg"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => addSelectionToTable(contextMenu.selectionId)}
+            className="w-full rounded-md px-3 py-2 text-left text-sm text-zinc-700 transition hover:bg-zinc-100"
+          >
+            Добавить данные в таблицу
+          </button>
         </div>
       ) : null}
 
@@ -1045,6 +1147,75 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
                 </LineChart>
               </ResponsiveContainer>
             </div>
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-2xl border border-zinc-200 bg-white p-4">
+        <div className="mb-3">
+          <h3 className="text-sm font-semibold text-zinc-900">Таблица данных</h3>
+          <p className="mt-1 text-xs text-zinc-500">
+            ПКМ по выделению → добавить точку или среднюю линии области в таблицу
+          </p>
+        </div>
+
+        {!tableRows.length ? (
+          <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50 px-4 py-5 text-sm text-zinc-500">
+            Таблица пустая. Добавьте строки через контекстное меню по правому клику на выделении.
+          </div>
+        ) : (
+          <div className="overflow-auto rounded-xl border border-zinc-200">
+            <table className="min-w-full border-collapse text-xs">
+              <thead className="bg-zinc-50 text-zinc-700">
+                <tr>
+                  <th className="w-44 border-b border-zinc-200 px-3 py-2 text-left font-semibold">№</th>
+                  <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">
+                    Комментарий
+                  </th>
+                  {wavelengthColumns.map((wavelength, index) => (
+                    <th
+                      key={`wl-${index}`}
+                      className="border-b border-zinc-200 px-2 py-2 text-right font-semibold whitespace-nowrap"
+                    >
+                      {Math.round(wavelength)} нм
+                    </th> 
+                  ))}
+                </tr>
+              </thead>
+
+              <tbody>
+                {tableRows.map((row, rowIndex) => (
+                  <tr key={row.id} className="odd:bg-white even:bg-zinc-50/40">
+                    <td className="w-44 border-b border-zinc-100 px-3 py-2 align-top text-zinc-700">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="h-3 w-3 rounded-sm border border-zinc-300"
+                          style={{ backgroundColor: row.sourceColor }}
+                        />
+                        <span className="font-medium">{rowIndex + 1}</span>
+                      </div>
+                      <div className="mt-1 text-[11px] text-zinc-500">{row.sourceLabel}</div>
+                    </td>
+                    <td className="border-b border-zinc-100 px-3 py-2 align-top">
+                      <input
+                        value={row.comment}
+                        onChange={(event) => handleCommentChange(row.id, event.target.value)}
+                        placeholder="Введите комментарий"
+                        className="w-56 rounded-md border border-zinc-300 px-2 py-1 text-xs outline-none focus:border-blue-500"
+                      />
+                    </td>
+                    {wavelengthColumns.map((_, index) => (
+                      <td
+                        key={`${row.id}-val-${index}`}
+                        className="border-b border-zinc-100 px-2 py-2 text-right text-zinc-700 whitespace-nowrap"
+                      >
+                        {(row.values[index] ?? 0).toFixed(6)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
