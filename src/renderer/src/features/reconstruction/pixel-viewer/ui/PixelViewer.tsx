@@ -80,6 +80,7 @@ type Series = {
 
 type TableRow = {
   id: string
+  name: string
   sourceId: string
   sourceLabel: string
   sourceColor: string
@@ -569,7 +570,14 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
         if (!isMounted) return
 
         if (persisted?.tables?.length) {
-          setDataTables(persisted.tables)
+          const migratedTables = persisted.tables.map((t) => ({
+            ...t,
+            rows: t.rows.map((r) => ({
+              ...r,
+              name: r.name ?? r.sourceLabel
+            }))
+          }))
+          setDataTables(migratedTables)
           const hasActive = persisted.activeTableId
             ? persisted.tables.some((table) => table.id === persisted.activeTableId)
             : false
@@ -925,6 +933,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
 
     const nextRow: TableRow = {
       id: createId('table-row'),
+      name: sourceLabel,
       sourceId: selectionId,
       sourceLabel,
       sourceColor: legendItem.color,
@@ -968,6 +977,12 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
     setContextMenu(null)
   }
 
+  const handleNameChange = (rowId: string, value: string): void => {
+    updateActiveTableRows((prev) =>
+      prev.map((row) => (row.id === rowId ? { ...row, name: value } : row))
+    )
+  }
+
   const handleCommentChange = (rowId: string, value: string): void => {
     updateActiveTableRows((prev) =>
       prev.map((row) => (row.id === rowId ? { ...row, comment: value } : row))
@@ -1001,6 +1016,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
 
     const header = [
       escapeCsvCell('№'),
+      escapeCsvCell('Название'),
       escapeCsvCell('Комментарий'),
       ...wavelengthColumns.map((wavelength) => escapeCsvCell(`${Math.round(wavelength)} нм`))
     ].join(',')
@@ -1008,6 +1024,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
     const lines = activeTable.rows.map((row, index) => {
       const cells: string[] = []
       cells.push(escapeCsvCell(String(index + 1)))
+      cells.push(escapeCsvCell(row.name ?? row.sourceLabel ?? ''))
       cells.push(escapeCsvCell(row.comment ?? ''))
       for (let i = 0; i < wavelengthColumns.length; i += 1) {
         cells.push(escapeCsvCell(String(row.values[i] ?? 0)))
@@ -1028,13 +1045,14 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
 
     const headerRow: Array<string | number> = [
       '№',
+      'Название',
       'Комментарий',
       ...wavelengthColumns.map((wavelength) => `${Math.round(wavelength)} нм`)
     ]
 
     const dataRows: Array<Array<string | number>> = activeTable.rows.map((row, index) => {
       const values = wavelengthColumns.map((_, i) => Number(row.values[i] ?? 0))
-      return [index + 1, row.comment ?? '', ...values]
+      return [index + 1, row.name ?? row.sourceLabel ?? '', row.comment ?? '', ...values]
     })
 
     const sheet = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows])
@@ -1732,8 +1750,11 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
             <table className="min-w-full border-collapse text-xs">
               <thead className="bg-zinc-50 text-zinc-700">
                 <tr>
-                  <th className="w-72 min-w-[18rem] border-b border-zinc-200 px-3 py-2 text-left font-semibold">
+                  <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">
                     №
+                  </th>
+                  <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">
+                    Название
                   </th>
                   <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">
                     Комментарий
@@ -1755,24 +1776,32 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
               <tbody>
                 {activeTable.rows.map((row, rowIndex) => (
                   <tr key={row.id} className="odd:bg-white even:bg-zinc-50/40">
-                    <td className="w-72 min-w-[18rem] border-b border-zinc-100 px-3 py-2 align-middle text-zinc-700">
+                    <td className="border-b border-zinc-100 px-3 py-2 align-middle text-zinc-700">
                       <div className="flex items-center gap-2">
                         <span
-                          className="h-3 w-3 rounded-sm border border-zinc-300"
+                          className="h-3 w-3 shrink-0 rounded-sm border border-zinc-300"
                           style={{ backgroundColor: row.sourceColor }}
                         />
                         <span className="font-medium">{rowIndex + 1}</span>
                       </div>
-                      <div className="mt-1 break-words text-[11px] leading-4 text-zinc-500">
+                      <div className="mt-1 break-words text-[11px] leading-4 text-zinc-400">
                         {row.sourceLabel}
                       </div>
                     </td>
                     <td className="border-b border-zinc-100 px-3 py-2 align-middle">
                       <input
+                        value={row.name ?? row.sourceLabel}
+                        onChange={(event) => handleNameChange(row.id, event.target.value)}
+                        placeholder="Название"
+                        className="w-44 rounded-md border border-zinc-300 px-2 py-1 text-xs outline-none focus:border-blue-500"
+                      />
+                    </td>
+                    <td className="border-b border-zinc-100 px-3 py-2 align-middle">
+                      <input
                         value={row.comment}
                         onChange={(event) => handleCommentChange(row.id, event.target.value)}
-                        placeholder="Введите комментарий"
-                        className="w-56 rounded-md border border-zinc-300 px-2 py-1 text-xs outline-none focus:border-blue-500"
+                        placeholder="Комментарий"
+                        className="w-44 rounded-md border border-zinc-300 px-2 py-1 text-xs outline-none focus:border-blue-500"
                       />
                     </td>
                     <td className="border-b border-zinc-100 px-3 py-2 align-middle">
@@ -1781,7 +1810,8 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
                           type="button"
                           onClick={() =>
                             addToSharedTable({
-                              name: row.sourceLabel,
+                              name: row.name ?? row.sourceLabel,
+                              comment: row.comment,
                               source: 'reconstruction',
                               color: row.sourceColor,
                               spectrum: row.values,

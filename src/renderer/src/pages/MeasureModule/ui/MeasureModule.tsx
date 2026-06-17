@@ -53,6 +53,7 @@ type Measurement = {
 type LocalTableRow = {
   id: string
   name: string
+  comment: string
   color: string
   spectrum: number[]
   xyz?: [number, number, number]
@@ -99,6 +100,56 @@ const statusMap: Record<SpotreadState, { label: string; className: string; descr
     }
   }
 
+const SPOTREAD_DB_NAME = 'spotread-local-table-db'
+const SPOTREAD_DB_VERSION = 1
+const SPOTREAD_DB_STORE = 'spotread-state'
+const SPOTREAD_DB_KEY = 'rows'
+
+async function openSpotreadDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = window.indexedDB.open(SPOTREAD_DB_NAME, SPOTREAD_DB_VERSION)
+    req.onupgradeneeded = (): void => {
+      if (!req.result.objectStoreNames.contains(SPOTREAD_DB_STORE)) {
+        req.result.createObjectStore(SPOTREAD_DB_STORE, { keyPath: 'id' })
+      }
+    }
+    req.onsuccess = (): void => resolve(req.result)
+    req.onerror = (): void => reject(req.error ?? new Error('Failed to open spotread IndexedDB'))
+  })
+}
+
+async function loadSpotreadRows(): Promise<LocalTableRow[]> {
+  const db = await openSpotreadDb()
+  try {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(SPOTREAD_DB_STORE, 'readonly')
+      const req = tx.objectStore(SPOTREAD_DB_STORE).get(SPOTREAD_DB_KEY)
+      req.onsuccess = (): void => {
+        const val = req.result as { id: string; payload: LocalTableRow[] } | undefined
+        const rows = val?.payload ?? []
+        resolve(rows.map((r) => ({ ...r, comment: r.comment ?? '' })))
+      }
+      req.onerror = (): void => reject(req.error)
+    })
+  } finally {
+    db.close()
+  }
+}
+
+async function saveSpotreadRows(rows: LocalTableRow[]): Promise<void> {
+  const db = await openSpotreadDb()
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(SPOTREAD_DB_STORE, 'readwrite')
+      tx.objectStore(SPOTREAD_DB_STORE).put({ id: SPOTREAD_DB_KEY, payload: rows })
+      tx.oncomplete = (): void => resolve()
+      tx.onerror = (): void => reject(tx.error)
+    })
+  } finally {
+    db.close()
+  }
+}
+
 function formatTriple(values?: [number, number, number]): string {
   if (!values) return '—'
   return values.map((v) => v.toFixed(4)).join(' / ')
@@ -144,6 +195,7 @@ export const MeasureModule: FC = () => {
   const [lastMeasurement, setLastMeasurement] = useState<Measurement | null>(null)
   const [measurements, setMeasurements] = useState<Measurement[]>([])
   const [localTable, setLocalTable] = useState<LocalTableRow[]>([])
+  const [localTableLoaded, setLocalTableLoaded] = useState(false)
   const [rawLog, setRawLog] = useState('')
   const [autoScroll, setAutoScroll] = useState(true)
   const [legendMenu, setLegendMenu] = useState<LegendMenu>(null)
@@ -168,6 +220,20 @@ export const MeasureModule: FC = () => {
     () => measurements.filter((m) => m.spectrum?.length),
     [measurements]
   )
+
+  useEffect(() => {
+    loadSpotreadRows()
+      .then((rows) => {
+        setLocalTable(rows)
+        setLocalTableLoaded(true)
+      })
+      .catch((): void => setLocalTableLoaded(true))
+  }, [])
+
+  useEffect(() => {
+    if (!localTableLoaded) return
+    void saveSpotreadRows(localTable)
+  }, [localTable, localTableLoaded])
 
   useEffect(() => {
     const unsubState = window.spotreadApi.onState((nextState): void => {
@@ -278,12 +344,17 @@ export const MeasureModule: FC = () => {
     }
   }
 
+  const updateLocalRow = (id: string, patch: Partial<LocalTableRow>): void => {
+    setLocalTable((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)))
+  }
+
   const addToLocalTable = (index: number): void => {
     const m = measurementsWithSpectrum[index]
     if (!m?.spectrum?.length) return
     const row: LocalTableRow = {
       id: `lr-${++_localRowId}`,
       name: m.name,
+      comment: '',
       color: SERIES_COLORS[index % SERIES_COLORS.length],
       spectrum: m.spectrum,
       xyz: m.xyz,
@@ -311,6 +382,7 @@ export const MeasureModule: FC = () => {
   const addLocalRowToShared = (row: LocalTableRow): void => {
     addToShared({
       name: row.name,
+      comment: row.comment,
       source: 'spotread',
       color: row.color,
       spectrum: row.spectrum,
@@ -331,6 +403,7 @@ export const MeasureModule: FC = () => {
     const maxLen = Math.max(...localTable.map((r) => r.spectrum.length))
     const header = [
       'Название',
+      'Комментарий',
       'Метка',
       'XYZ',
       'Lab',
@@ -338,6 +411,7 @@ export const MeasureModule: FC = () => {
     ]
     const data = localTable.map((row) => [
       row.name,
+      row.comment,
       row.timestamp,
       row.xyz ? row.xyz.map((v) => v.toFixed(6)).join(';') : '',
       row.lab ? row.lab.map((v) => v.toFixed(6)).join(';') : '',
@@ -358,6 +432,7 @@ export const MeasureModule: FC = () => {
     const maxLen = Math.max(...localTable.map((r) => r.spectrum.length))
     const header = [
       'Название',
+      'Комментарий',
       'Метка',
       'XYZ',
       'Lab',
@@ -365,6 +440,7 @@ export const MeasureModule: FC = () => {
     ]
     const data = localTable.map((row) => [
       row.name,
+      row.comment,
       row.timestamp,
       row.xyz ? row.xyz.map((v) => v.toFixed(6)).join(';') : '',
       row.lab ? row.lab.map((v) => v.toFixed(6)).join(';') : '',
@@ -617,7 +693,7 @@ export const MeasureModule: FC = () => {
             <h2 className="text-base font-semibold text-zinc-900">Таблица измерений</h2>
             <p className="mt-1 text-sm text-zinc-600">
               {localTable.length
-                ? `${localTable.length} записей · ПКМ на метке → «В таблицу»`
+                ? `${localTable.length} записей`
                 : 'Добавляйте точки через правый клик на метке графика'}
             </p>
           </div>
@@ -658,6 +734,9 @@ export const MeasureModule: FC = () => {
                     Название
                   </th>
                   <th className="border-b border-zinc-200 px-3 py-2.5 text-left font-semibold">
+                    Комментарий
+                  </th>
+                  <th className="border-b border-zinc-200 px-3 py-2.5 text-left font-semibold">
                     XYZ
                   </th>
                   <th className="border-b border-zinc-200 px-3 py-2.5 text-left font-semibold">
@@ -674,15 +753,32 @@ export const MeasureModule: FC = () => {
               </thead>
               <tbody>
                 {localTable.map((row) => (
-                  <tr key={row.id} className="border-b border-zinc-100 odd:bg-white even:bg-zinc-50/40">
+                  <tr
+                    key={row.id}
+                    className="border-b border-zinc-100 odd:bg-white even:bg-zinc-50/40"
+                  >
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-2">
                         <span
                           className="h-2.5 w-2.5 shrink-0 rounded-full"
                           style={{ background: row.color }}
                         />
-                        <span className="font-medium text-zinc-800">{row.name}</span>
+                        <input
+                          value={row.name}
+                          onChange={(e): void => updateLocalRow(row.id, { name: e.target.value })}
+                          className="w-32 rounded border border-transparent bg-transparent px-1 py-0.5 font-medium text-zinc-800 outline-none hover:border-zinc-300 focus:border-zinc-400 focus:bg-white"
+                        />
                       </div>
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        value={row.comment}
+                        onChange={(e): void =>
+                          updateLocalRow(row.id, { comment: e.target.value })
+                        }
+                        placeholder="Комментарий"
+                        className="w-40 rounded border border-zinc-300 bg-white px-2 py-1 text-zinc-700 outline-none focus:border-zinc-400"
+                      />
                     </td>
                     <td className="px-3 py-2 font-mono text-zinc-700">
                       {row.xyz ? row.xyz.map((v) => v.toFixed(4)).join(' / ') : '—'}

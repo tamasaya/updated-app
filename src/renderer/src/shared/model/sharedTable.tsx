@@ -3,6 +3,7 @@ import { createContext, FC, ReactNode, useCallback, useContext, useEffect, useSt
 export type SharedTableRow = {
   id: string
   name: string
+  comment: string
   source: 'spotread' | 'reconstruction'
   color: string
   spectrum: number[]
@@ -12,8 +13,9 @@ export type SharedTableRow = {
 
 type SharedTableCtxType = {
   rows: SharedTableRow[]
-  addRow: (row: Omit<SharedTableRow, 'id'>) => void
+  addRow: (row: Omit<SharedTableRow, 'id' | 'comment'> & { comment?: string }) => void
   removeRow: (id: string) => void
+  updateRow: (id: string, patch: Partial<Omit<SharedTableRow, 'id'>>) => void
   clearRows: () => void
 }
 
@@ -48,7 +50,8 @@ async function loadRows(): Promise<SharedTableRow[]> {
       const req = store.get(DB_KEY)
       req.onsuccess = (): void => {
         const val = req.result as { id: string; payload: SharedTableRow[] } | undefined
-        resolve(val?.payload ?? [])
+        const rows = val?.payload ?? []
+        resolve(rows.map((r) => ({ ...r, comment: r.comment ?? '' })))
       }
       req.onerror = (): void => reject(req.error)
     })
@@ -89,18 +92,31 @@ export const SharedTableProvider: FC<{ children: ReactNode }> = ({ children }) =
     void saveRows(rows)
   }, [rows, loaded])
 
-  const addRow = useCallback((row: Omit<SharedTableRow, 'id'>): void => {
-    setRows((prev) => [...prev, { ...row, id: `st-${++_counter}` }])
-  }, [])
+  const addRow = useCallback(
+    (row: Omit<SharedTableRow, 'id' | 'comment'> & { comment?: string }): void => {
+      setRows((prev) => [
+        ...prev,
+        { ...row, id: `st-${++_counter}`, comment: row.comment ?? '' }
+      ])
+    },
+    []
+  )
 
   const removeRow = useCallback((id: string): void => {
     setRows((prev) => prev.filter((r) => r.id !== id))
   }, [])
 
+  const updateRow = useCallback(
+    (id: string, patch: Partial<Omit<SharedTableRow, 'id'>>): void => {
+      setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)))
+    },
+    []
+  )
+
   const clearRows = useCallback((): void => setRows([]), [])
 
   return (
-    <SharedTableCtx.Provider value={{ rows, addRow, removeRow, clearRows }}>
+    <SharedTableCtx.Provider value={{ rows, addRow, removeRow, updateRow, clearRows }}>
       {children}
     </SharedTableCtx.Provider>
   )

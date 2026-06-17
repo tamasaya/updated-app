@@ -3,13 +3,14 @@ import * as XLSX from 'xlsx'
 import { useSharedTable } from '@/shared/model/sharedTable'
 
 export const SharedTable: FC = () => {
-  const { rows, removeRow, clearRows } = useSharedTable()
+  const { rows, removeRow, updateRow, clearRows } = useSharedTable()
 
   const handleExportCsv = (): void => {
     if (!rows.length) return
     const maxLen = Math.max(...rows.map((r) => r.spectrum.length))
     const header = [
       'Название',
+      'Комментарий',
       'Источник',
       'λ нач',
       'λ кон',
@@ -17,6 +18,7 @@ export const SharedTable: FC = () => {
     ]
     const data = rows.map((row) => [
       row.name,
+      row.comment,
       row.source === 'spotread' ? 'Spotread' : 'Реконструкция',
       row.wavelengthStart,
       row.wavelengthEnd,
@@ -37,6 +39,7 @@ export const SharedTable: FC = () => {
     const maxLen = Math.max(...rows.map((r) => r.spectrum.length))
     const header = [
       'Название',
+      'Комментарий',
       'Источник',
       'λ нач',
       'λ кон',
@@ -44,6 +47,7 @@ export const SharedTable: FC = () => {
     ]
     const data = rows.map((row) => [
       row.name,
+      row.comment,
       row.source === 'spotread' ? 'Spotread' : 'Реконструкция',
       row.wavelengthStart,
       row.wavelengthEnd,
@@ -103,6 +107,9 @@ export const SharedTable: FC = () => {
                   Название
                 </th>
                 <th className="border-b border-zinc-200 px-3 py-2.5 text-left font-semibold">
+                  Комментарий
+                </th>
+                <th className="border-b border-zinc-200 px-3 py-2.5 text-left font-semibold">
                   Источник
                 </th>
                 <th className="border-b border-zinc-200 px-3 py-2.5 text-left font-semibold">
@@ -116,18 +123,27 @@ export const SharedTable: FC = () => {
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr
-                  key={row.id}
-                  className="border-b border-zinc-100 odd:bg-white even:bg-zinc-50/40"
-                >
+                <tr key={row.id} className="border-b border-zinc-100 odd:bg-white even:bg-zinc-50/40">
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-2">
                       <span
                         className="h-2.5 w-2.5 shrink-0 rounded-full"
                         style={{ background: row.color }}
                       />
-                      <span className="font-medium text-zinc-800">{row.name}</span>
+                      <input
+                        value={row.name}
+                        onChange={(e): void => updateRow(row.id, { name: e.target.value })}
+                        className="w-36 rounded border border-transparent bg-transparent px-1 py-0.5 font-medium text-zinc-800 outline-none hover:border-zinc-300 focus:border-zinc-400 focus:bg-white"
+                      />
                     </div>
+                  </td>
+                  <td className="px-3 py-2">
+                    <input
+                      value={row.comment}
+                      onChange={(e): void => updateRow(row.id, { comment: e.target.value })}
+                      placeholder="Комментарий"
+                      className="w-44 rounded border border-zinc-300 bg-white px-2 py-1 text-zinc-700 outline-none focus:border-zinc-400"
+                    />
                   </td>
                   <td className="px-3 py-2">
                     <span
@@ -147,7 +163,7 @@ export const SharedTable: FC = () => {
                   <td className="px-3 py-2 text-zinc-600">{row.spectrum.length}</td>
                   <td className="px-3 py-2">
                     <button
-                      onClick={() => removeRow(row.id)}
+                      onClick={(): void => removeRow(row.id)}
                       className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-[11px] text-zinc-700 transition hover:bg-zinc-100"
                     >
                       Удалить
