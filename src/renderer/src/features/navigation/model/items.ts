@@ -1,5 +1,5 @@
 import { routes } from '@/shared/config/routes'
-import { Activity, LucideIcon, ScanLine } from 'lucide-react'
+import { Activity, LucideIcon, ScanLine, Table2 } from 'lucide-react'
 
 export type NavigationItem = {
   label: string
@@ -17,5 +17,10 @@ export const navigationItems: NavigationItem[] = [
     label: 'Спектральная реконструкция',
     to: routes.spectralReconstruction,
     icon: Activity
+  },
+  {
+    label: 'Общая таблица',
+    to: routes.sharedTable,
+    icon: Table2
   }
 ]

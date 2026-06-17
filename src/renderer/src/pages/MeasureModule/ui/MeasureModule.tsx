@@ -10,8 +10,8 @@ import {
   YAxis
 } from 'recharts'
 import { useSharedTable } from '@/shared/model/sharedTable'
-import { SharedTable } from '@/shared/ui/SharedTable/SharedTable'
 import { ChevronDown } from 'lucide-react'
+import * as XLSX from 'xlsx'
 
 const SERIES_COLORS = [
   '#6366f1',
@@ -47,6 +47,16 @@ type Measurement = {
   xyz?: [number, number, number]
   lab?: [number, number, number]
   rawText: string
+  timestamp: string
+}
+
+type LocalTableRow = {
+  id: string
+  name: string
+  color: string
+  spectrum: number[]
+  xyz?: [number, number, number]
+  lab?: [number, number, number]
   timestamp: string
 }
 
@@ -91,7 +101,7 @@ const statusMap: Record<SpotreadState, { label: string; className: string; descr
 
 function formatTriple(values?: [number, number, number]): string {
   if (!values) return '—'
-  return values.map((v) => v.toFixed(6)).join(' / ')
+  return values.map((v) => v.toFixed(4)).join(' / ')
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -123,6 +133,8 @@ function buildChartData(measurements: Measurement[]): { data: ChartRow[]; keys: 
   return { data, keys }
 }
 
+let _localRowId = 0
+
 type LegendMenu = { x: number; y: number; index: number } | null
 
 export const MeasureModule: FC = () => {
@@ -131,6 +143,7 @@ export const MeasureModule: FC = () => {
   const [state, setState] = useState<SpotreadState>('idle')
   const [lastMeasurement, setLastMeasurement] = useState<Measurement | null>(null)
   const [measurements, setMeasurements] = useState<Measurement[]>([])
+  const [localTable, setLocalTable] = useState<LocalTableRow[]>([])
   const [rawLog, setRawLog] = useState('')
   const [autoScroll, setAutoScroll] = useState(true)
   const [legendMenu, setLegendMenu] = useState<LegendMenu>(null)
@@ -140,7 +153,7 @@ export const MeasureModule: FC = () => {
   const logRef = useRef<HTMLPreElement | null>(null)
   const measureCountRef = useRef(0)
 
-  const { addRow } = useSharedTable()
+  const { addRow: addToShared } = useSharedTable()
   const status = statusMap[state]
 
   const isBusy = state === 'starting' || state === 'measuring' || isCalibrating
@@ -159,12 +172,7 @@ export const MeasureModule: FC = () => {
   useEffect(() => {
     const unsubState = window.spotreadApi.onState((nextState): void => {
       setState(nextState as SpotreadState)
-      if (
-        nextState === 'readyToMeasure' ||
-        nextState === 'error' ||
-        nextState === 'exited' ||
-        nextState === 'idle'
-      ) {
+      if (['readyToMeasure', 'error', 'exited', 'idle'].includes(nextState)) {
         setIsCalibrating(false)
       }
     })
@@ -270,10 +278,26 @@ export const MeasureModule: FC = () => {
     }
   }
 
-  const handleAddToTable = (index: number): void => {
+  const addToLocalTable = (index: number): void => {
     const m = measurementsWithSpectrum[index]
     if (!m?.spectrum?.length) return
-    addRow({
+    const row: LocalTableRow = {
+      id: `lr-${++_localRowId}`,
+      name: m.name,
+      color: SERIES_COLORS[index % SERIES_COLORS.length],
+      spectrum: m.spectrum,
+      xyz: m.xyz,
+      lab: m.lab,
+      timestamp: m.timestamp
+    }
+    setLocalTable((prev) => [...prev, row])
+    setLegendMenu(null)
+  }
+
+  const addToSharedTable = (index: number): void => {
+    const m = measurementsWithSpectrum[index]
+    if (!m?.spectrum?.length) return
+    addToShared({
       name: m.name,
       source: 'spotread',
       color: SERIES_COLORS[index % SERIES_COLORS.length],
@@ -284,11 +308,72 @@ export const MeasureModule: FC = () => {
     setLegendMenu(null)
   }
 
-  const handleRemoveFromChart = (index: number): void => {
+  const addLocalRowToShared = (row: LocalTableRow): void => {
+    addToShared({
+      name: row.name,
+      source: 'spotread',
+      color: row.color,
+      spectrum: row.spectrum,
+      wavelengthStart: 380,
+      wavelengthEnd: 730
+    })
+  }
+
+  const removeFromChart = (index: number): void => {
     const target = measurementsWithSpectrum[index]
     if (!target) return
     setMeasurements((prev) => prev.filter((m) => m !== target))
     setLegendMenu(null)
+  }
+
+  const handleExportLocalCsv = (): void => {
+    if (!localTable.length) return
+    const maxLen = Math.max(...localTable.map((r) => r.spectrum.length))
+    const header = [
+      'Название',
+      'Метка',
+      'XYZ',
+      'Lab',
+      ...Array.from({ length: maxLen }, (_, i) => `ch_${i + 1}`)
+    ]
+    const data = localTable.map((row) => [
+      row.name,
+      row.timestamp,
+      row.xyz ? row.xyz.map((v) => v.toFixed(6)).join(';') : '',
+      row.lab ? row.lab.map((v) => v.toFixed(6)).join(';') : '',
+      ...Array.from({ length: maxLen }, (_, i) => row.spectrum[i] ?? '')
+    ])
+    const content = [header, ...data].map((r) => r.join(',')).join('\n')
+    const blob = new Blob(['﻿' + content], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `spotread-table-${Date.now()}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const handleExportLocalExcel = (): void => {
+    if (!localTable.length) return
+    const maxLen = Math.max(...localTable.map((r) => r.spectrum.length))
+    const header = [
+      'Название',
+      'Метка',
+      'XYZ',
+      'Lab',
+      ...Array.from({ length: maxLen }, (_, i) => `ch_${i + 1}`)
+    ]
+    const data = localTable.map((row) => [
+      row.name,
+      row.timestamp,
+      row.xyz ? row.xyz.map((v) => v.toFixed(6)).join(';') : '',
+      row.lab ? row.lab.map((v) => v.toFixed(6)).join(';') : '',
+      ...Array.from({ length: maxLen }, (_, i) => row.spectrum[i] ?? 0)
+    ])
+    const ws = XLSX.utils.aoa_to_sheet([header, ...data])
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Spotread')
+    XLSX.writeFile(wb, `spotread-table-${Date.now()}.xlsx`)
   }
 
   return (
@@ -298,7 +383,6 @@ export const MeasureModule: FC = () => {
         subtitle="Измерение одной точки через X-Rite i1 Pro и ArgyllCMS"
       />
 
-      {/* Основной контент с оверлеем загрузки */}
       <div className="relative">
         {isBusy && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center rounded-2xl bg-zinc-50/85 backdrop-blur-[2px]">
@@ -376,7 +460,6 @@ export const MeasureModule: FC = () => {
                 </div>
               </div>
 
-              {/* Подсказка горячих клавиш */}
               <div className="mt-4 flex justify-end">
                 <div className="group relative">
                   <button
@@ -407,14 +490,13 @@ export const MeasureModule: FC = () => {
 
           {/* Правая колонка — спектр + результат */}
           <div className="space-y-6">
-            {/* График */}
             <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-base font-semibold text-zinc-900">Спектр</h2>
                   <p className="mt-1 text-sm text-zinc-600">
                     {measurementsWithSpectrum.length
-                      ? `${measurementsWithSpectrum.length} изм. · ПКМ на метке — добавить в таблицу`
+                      ? `${measurementsWithSpectrum.length} изм. · ПКМ на метке для действий`
                       : 'Нет данных'}
                   </p>
                 </div>
@@ -497,7 +579,7 @@ export const MeasureModule: FC = () => {
               )}
             </div>
 
-            {/* Последний результат — горизонтально */}
+            {/* Последний результат */}
             <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
               <div className="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <h2 className="text-base font-semibold text-zinc-900">Последний результат</h2>
@@ -528,10 +610,117 @@ export const MeasureModule: FC = () => {
         </div>
       </div>
 
-      {/* Общая таблица */}
-      <SharedTable />
+      {/* Локальная таблица Spotread */}
+      <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-zinc-900">Таблица измерений</h2>
+            <p className="mt-1 text-sm text-zinc-600">
+              {localTable.length
+                ? `${localTable.length} записей · ПКМ на метке → «В таблицу»`
+                : 'Добавляйте точки через правый клик на метке графика'}
+            </p>
+          </div>
+          {localTable.length > 0 && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleExportLocalCsv}
+                className="rounded-xl border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50"
+              >
+                CSV
+              </button>
+              <button
+                onClick={handleExportLocalExcel}
+                className="rounded-xl border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50"
+              >
+                Excel
+              </button>
+              <button
+                onClick={(): void => setLocalTable([])}
+                className="rounded-xl border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-600 transition hover:bg-rose-50"
+              >
+                Очистить
+              </button>
+            </div>
+          )}
+        </div>
 
-      {/* Лог — внизу, скрытый по умолчанию */}
+        {localTable.length === 0 ? (
+          <div className="mt-5 rounded-xl border border-dashed border-zinc-300 p-6 text-center text-sm text-zinc-500">
+            Пусто. Правый клик на метке графика → «В таблицу».
+          </div>
+        ) : (
+          <div className="mt-5 overflow-auto rounded-xl border border-zinc-200">
+            <table className="min-w-full border-collapse text-xs">
+              <thead className="bg-zinc-50 text-zinc-600">
+                <tr>
+                  <th className="border-b border-zinc-200 px-3 py-2.5 text-left font-semibold">
+                    Название
+                  </th>
+                  <th className="border-b border-zinc-200 px-3 py-2.5 text-left font-semibold">
+                    XYZ
+                  </th>
+                  <th className="border-b border-zinc-200 px-3 py-2.5 text-left font-semibold">
+                    Lab
+                  </th>
+                  <th className="border-b border-zinc-200 px-3 py-2.5 text-left font-semibold">
+                    Точек
+                  </th>
+                  <th className="border-b border-zinc-200 px-3 py-2.5 text-left font-semibold">
+                    Время
+                  </th>
+                  <th className="border-b border-zinc-200 px-3 py-2.5" />
+                </tr>
+              </thead>
+              <tbody>
+                {localTable.map((row) => (
+                  <tr key={row.id} className="border-b border-zinc-100 odd:bg-white even:bg-zinc-50/40">
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="h-2.5 w-2.5 shrink-0 rounded-full"
+                          style={{ background: row.color }}
+                        />
+                        <span className="font-medium text-zinc-800">{row.name}</span>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 font-mono text-zinc-700">
+                      {row.xyz ? row.xyz.map((v) => v.toFixed(4)).join(' / ') : '—'}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-zinc-700">
+                      {row.lab ? row.lab.map((v) => v.toFixed(4)).join(' / ') : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-zinc-500">{row.spectrum.length}</td>
+                    <td className="px-3 py-2 text-zinc-500">{row.timestamp}</td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={(): void => addLocalRowToShared(row)}
+                          className="rounded-md border border-violet-200 bg-white px-2 py-1 text-[11px] text-violet-700 transition hover:bg-violet-50"
+                        >
+                          → Общая
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(): void =>
+                            setLocalTable((prev) => prev.filter((r) => r.id !== row.id))
+                          }
+                          className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-[11px] text-zinc-700 transition hover:bg-zinc-100"
+                        >
+                          Удалить
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Лог */}
       <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm">
         <button
           type="button"
@@ -573,10 +762,10 @@ export const MeasureModule: FC = () => {
         )}
       </div>
 
-      {/* Контекстное меню легенды */}
+      {/* Контекстное меню */}
       {legendMenu && (
         <div
-          className="fixed z-50 min-w-44 rounded-lg border border-zinc-200 bg-white p-1 shadow-lg"
+          className="fixed z-50 min-w-48 rounded-lg border border-zinc-200 bg-white p-1 shadow-lg"
           style={{ left: legendMenu.x, top: legendMenu.y }}
           onClick={(e): void => {
             e.stopPropagation()
@@ -584,15 +773,22 @@ export const MeasureModule: FC = () => {
         >
           <button
             type="button"
-            onClick={(): void => handleAddToTable(legendMenu.index)}
+            onClick={(): void => addToLocalTable(legendMenu.index)}
             className="w-full rounded-md px-3 py-2 text-left text-sm text-zinc-700 transition hover:bg-zinc-100"
           >
-            Добавить в таблицу
+            В таблицу
+          </button>
+          <button
+            type="button"
+            onClick={(): void => addToSharedTable(legendMenu.index)}
+            className="w-full rounded-md px-3 py-2 text-left text-sm text-violet-700 transition hover:bg-violet-50"
+          >
+            В общую таблицу
           </button>
           <div className="my-1 border-t border-zinc-100" />
           <button
             type="button"
-            onClick={(): void => handleRemoveFromChart(legendMenu.index)}
+            onClick={(): void => removeFromChart(legendMenu.index)}
             className="w-full rounded-md px-3 py-2 text-left text-sm text-rose-600 transition hover:bg-rose-50"
           >
             Удалить с графика

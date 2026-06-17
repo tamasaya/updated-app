@@ -1,5 +1,6 @@
 export const routes = {
   home: '/',
   spotread: '/spotread',
-  spectralReconstruction: '/spectral-reconstruction'
+  spectralReconstruction: '/spectral-reconstruction',
+  sharedTable: '/table'
 } as const

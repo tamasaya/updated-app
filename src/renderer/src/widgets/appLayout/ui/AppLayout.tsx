@@ -3,6 +3,7 @@ import { FC } from 'react'
 import { routes } from '@/shared/config/routes'
 import { MeasureModule } from '@/pages/MeasureModule'
 import { ReconstructionPage } from '@/pages/ReconstructionPage/ui/ReconstructionPage'
+import { SharedTablePage } from '@/pages/SharedTablePage/ui/SharedTablePage'
 import { SharedTableProvider } from '@/shared/model/sharedTable'
 import { navigationItems } from '@/features/navigation'
 
@@ -47,6 +48,9 @@ export const AppLayout: FC = () => {
             </div>
             <div hidden={pathname !== routes.spectralReconstruction}>
               <ReconstructionPage />
+            </div>
+            <div hidden={pathname !== routes.sharedTable}>
+              <SharedTablePage />
             </div>
           </div>
         </main>
