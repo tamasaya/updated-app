@@ -4,8 +4,9 @@ import { spawn } from 'child_process'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import fsp from 'fs/promises'
-import fs from 'node:fs'
-import path from 'node:path'
+import { registerSpotreadIpc } from './spotread'
+// import fs from 'node:fs'
+// import path from 'node:path'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -55,7 +56,7 @@ app.whenReady().then(() => {
 
   ipcMain.on('ping', () => console.log('pong'))
 
-  // registerSpotreadIpc(() => mainWindow)
+  registerSpotreadIpc(() => mainWindow)
 
   mainWindow = createWindow()
 

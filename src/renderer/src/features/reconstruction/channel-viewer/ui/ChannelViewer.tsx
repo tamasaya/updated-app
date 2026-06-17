@@ -103,7 +103,8 @@ function downloadBlob(blob: Blob, filename: string): void {
 }
 
 function escapeCsvCell(value: string): string {
-  const mustQuote = value.includes('"') || value.includes(',') || value.includes('\n') || value.includes('\r')
+  const mustQuote =
+    value.includes('"') || value.includes(',') || value.includes('\n') || value.includes('\r')
   if (!mustQuote) return value
   return `"${value.replaceAll('"', '""')}"`
 }
@@ -163,7 +164,9 @@ async function renderSvgToCanvas(svgEl: SVGSVGElement, scale: number): Promise<H
 
 async function exportSvgAsPng(svgEl: SVGSVGElement, filename: string, scale = 2): Promise<void> {
   const canvas = await renderSvgToCanvas(svgEl, scale)
-  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob((b) => resolve(b), 'image/png'))
+  const blob = await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob((b) => resolve(b), 'image/png')
+  )
   if (blob) {
     downloadBlob(blob, filename)
     return
@@ -505,7 +508,10 @@ export function ChannelViewer({ npyPath }: Props): JSX.Element {
         </div>
 
         {spectrumRows.length ? (
-          <div ref={chartContainerRef} className="h-[360px] rounded-xl border border-zinc-200 bg-white p-3">
+          <div
+            ref={chartContainerRef}
+            className="h-[360px] rounded-xl border border-zinc-200 bg-white p-3"
+          >
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={spectrumRows} margin={{ top: 12, right: 20, left: 8, bottom: 8 }}>
                 <CartesianGrid stroke="#e4e4e7" strokeDasharray="4 4" />

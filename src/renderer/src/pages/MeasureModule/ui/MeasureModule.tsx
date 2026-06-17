@@ -1,4 +1,3 @@
-import Versions from '@/components/Versions'
 import { PageTitle } from '@/shared/ui/PageTitle/PageTitle'
 import { FC, useEffect, useMemo, useRef, useState } from 'react'
 
