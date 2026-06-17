@@ -2,6 +2,7 @@ import { JSX, useState } from 'react'
 import { RunPredictionButton } from '@/features/reconstruction/run-prediction'
 import { ChannelViewer } from '@/features/reconstruction/channel-viewer'
 import { PixelViewer } from '@/features/reconstruction/pixel-viewer'
+import { SharedTable } from '@/shared/ui/SharedTable/SharedTable'
 
 export function ReconstructionWorkspace(): JSX.Element {
   const [npyPath, setNpyPath] = useState<string | null>(null)
@@ -98,6 +99,8 @@ export function ReconstructionWorkspace(): JSX.Element {
           </div>
         </div>
       </div>
+
+      <SharedTable />
     </div>
   )
 }

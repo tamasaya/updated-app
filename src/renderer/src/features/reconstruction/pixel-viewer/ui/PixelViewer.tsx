@@ -1,5 +1,14 @@
 import { JSX, useEffect, useMemo, useRef, useState } from 'react'
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { useSharedTable } from '@/shared/model/sharedTable'
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis
+} from 'recharts'
 import {
   Activity,
   Beaker,
@@ -220,7 +229,8 @@ async function savePersistedTablesState(payload: PersistedTablesState): Promise<
       store.put({ id: INDEXED_DB_STATE_KEY, payload })
 
       transaction.oncomplete = () => resolve()
-      transaction.onerror = () => reject(transaction.error ?? new Error('Failed to save indexedDB state'))
+      transaction.onerror = () =>
+        reject(transaction.error ?? new Error('Failed to save indexedDB state'))
     })
   } finally {
     db.close()
@@ -361,7 +371,8 @@ function downloadBlob(blob: Blob, filename: string): void {
 }
 
 function escapeCsvCell(value: string): string {
-  const mustQuote = value.includes('"') || value.includes(',') || value.includes('\n') || value.includes('\r')
+  const mustQuote =
+    value.includes('"') || value.includes(',') || value.includes('\n') || value.includes('\r')
   if (!mustQuote) return value
   return `"${value.replaceAll('"', '""')}"`
 }
@@ -422,7 +433,9 @@ async function renderSvgToCanvas(svgEl: SVGSVGElement, scale: number): Promise<H
 
 async function exportSvgAsPng(svgEl: SVGSVGElement, filename: string, scale = 2): Promise<void> {
   const canvas = await renderSvgToCanvas(svgEl, scale)
-  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob((b) => resolve(b), 'image/png'))
+  const blob = await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob((b) => resolve(b), 'image/png')
+  )
   if (blob) {
     downloadBlob(blob, filename)
     return
@@ -509,6 +522,8 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
     channelCount,
     imageDataUrl
   } = usePixelViewer(npyPath)
+
+  const { addRow: addToSharedTable } = useSharedTable()
 
   const [points, setPoints] = useState<Point[]>([])
   const [regions, setRegions] = useState<Region[]>([])
@@ -918,6 +933,38 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
     }
 
     updateActiveTableRows((prev) => [...prev, nextRow])
+    setContextMenu(null)
+  }
+
+  const addSelectionToSharedTable = (selectionId: string): void => {
+    if (!cube) return
+
+    const point = points.find((entry) => entry.id === selectionId)
+    const region = regions.find((entry) => entry.id === selectionId)
+    const legendItem = selectionLegend.find((entry) => entry.id === selectionId)
+    if (!legendItem) return
+
+    let values: number[] | null = null
+    let label = legendItem.label
+
+    if (point) {
+      values = getSpectrumAtPoint(cube, point.x, point.y)
+      label = `${legendItem.label} (точка)`
+    } else if (region) {
+      values = getRegionMeanSpectrum(cube, region)
+      label = `${legendItem.label} (средняя)`
+    }
+
+    if (!values?.length) return
+
+    addToSharedTable({
+      name: label,
+      source: 'reconstruction',
+      color: legendItem.color,
+      spectrum: values,
+      wavelengthStart: WAVELENGTH_START_NM,
+      wavelengthEnd: WAVELENGTH_END_NM
+    })
     setContextMenu(null)
   }
 
@@ -1333,7 +1380,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
                 aria-pressed={enabledSelectionIds.has(item.id)}
                 className={[
                   'inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs',
-                  enabledSelectionIds.has(item.id)  
+                  enabledSelectionIds.has(item.id)
                     ? 'border-zinc-200 bg-zinc-50 text-zinc-700'
                     : 'border-zinc-200 bg-zinc-100 text-zinc-400 opacity-70'
                 ].join(' ')}
@@ -1362,7 +1409,14 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
             onClick={() => addSelectionToTable(contextMenu.selectionId)}
             className="w-full rounded-md px-3 py-2 text-left text-sm text-zinc-700 transition hover:bg-zinc-100"
           >
-            Добавить данные в таблицу
+            Добавить в таблицу модуля
+          </button>
+          <button
+            type="button"
+            onClick={() => addSelectionToSharedTable(contextMenu.selectionId)}
+            className="w-full rounded-md px-3 py-2 text-left text-sm text-zinc-700 transition hover:bg-zinc-100"
+          >
+            Добавить в общую таблицу
           </button>
         </div>
       ) : null}
@@ -1377,7 +1431,7 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
           </div>
 
           <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2">
               <label className="mb-1 block text-sm font-medium text-zinc-800">
                 Усреднённая линия
               </label>
@@ -1594,7 +1648,8 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
 
           {activeTable ? (
             <div className="text-xs text-zinc-600">
-              Активная таблица: <span className="font-medium text-zinc-800">{activeTable.name}</span>
+              Активная таблица:{' '}
+              <span className="font-medium text-zinc-800">{activeTable.name}</span>
             </div>
           ) : null}
         </div>
@@ -1606,7 +1661,9 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
 
               <div className="space-y-3">
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-zinc-700">Название таблицы</label>
+                  <label className="mb-1 block text-xs font-medium text-zinc-700">
+                    Название таблицы
+                  </label>
                   <input
                     value={tableSettingsDraft.name}
                     onChange={(event) =>
@@ -1617,7 +1674,9 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-zinc-700">Иконка таблицы</label>
+                  <label className="mb-1 block text-xs font-medium text-zinc-700">
+                    Иконка таблицы
+                  </label>
                   <div className="flex max-h-44 flex-wrap gap-1.5 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-2">
                     {TABLE_ICON_KEYS.map((key) => {
                       const Icon = TABLE_ICON_COMPONENTS[key]
@@ -1626,7 +1685,9 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
                         <button
                           key={key}
                           type="button"
-                          onClick={() => setTableSettingsDraft((prev) => ({ ...prev, iconKey: key }))}
+                          onClick={() =>
+                            setTableSettingsDraft((prev) => ({ ...prev, iconKey: key }))
+                          }
                           className={[
                             'rounded-md border p-1.5 transition',
                             isSelected
@@ -1677,14 +1738,16 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
                   <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">
                     Комментарий
                   </th>
-                  <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">Действия</th>
+                  <th className="border-b border-zinc-200 px-3 py-2 text-left font-semibold">
+                    Действия
+                  </th>
                   {wavelengthColumns.map((wavelength, index) => (
                     <th
                       key={`wl-${index}`}
                       className="border-b border-zinc-200 px-2 py-2 text-right font-semibold whitespace-nowrap"
                     >
                       {Math.round(wavelength)} нм
-                    </th> 
+                    </th>
                   ))}
                 </tr>
               </thead>
