@@ -11,6 +11,7 @@ import {
 } from 'recharts'
 import { useSharedTable } from '@/shared/model/sharedTable'
 import { SharedTable } from '@/shared/ui/SharedTable/SharedTable'
+import { ChevronDown } from 'lucide-react'
 
 const SERIES_COLORS = [
   '#6366f1',
@@ -23,6 +24,12 @@ const SERIES_COLORS = [
   '#14b8a6',
   '#ec4899',
   '#84cc16'
+]
+
+const HOTKEYS = [
+  { key: 'Space', label: 'Измерить' },
+  { key: 'K', label: 'Калибровать' },
+  { key: 'Esc', label: 'Остановить' }
 ]
 
 type SpotreadState =
@@ -58,13 +65,12 @@ const statusMap: Record<SpotreadState, { label: string; className: string; descr
     awaitingCalibration: {
       label: 'Ждёт калибровку',
       className: 'bg-amber-50 text-amber-700 ring-amber-200',
-      description:
-        'Наденьте колпачок или поставьте прибор на чёрную поверхность, затем нажмите калибровку'
+      description: 'Наденьте колпачок или поставьте прибор на чёрную поверхность'
     },
     readyToMeasure: {
       label: 'Готов к измерению',
       className: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
-      description: 'Можно мерить из интерфейса, пробелом на клавиатуре или кнопкой на приборе'
+      description: 'Пробел, кнопка на приборе или кнопка «Измерить»'
     },
     measuring: {
       label: 'Измерение',
@@ -128,13 +134,19 @@ export const MeasureModule: FC = () => {
   const [rawLog, setRawLog] = useState('')
   const [autoScroll, setAutoScroll] = useState(true)
   const [legendMenu, setLegendMenu] = useState<LegendMenu>(null)
+  const [isCalibrating, setIsCalibrating] = useState(false)
+  const [isLogOpen, setIsLogOpen] = useState(false)
 
   const logRef = useRef<HTMLPreElement | null>(null)
   const measureCountRef = useRef(0)
 
   const { addRow } = useSharedTable()
-
   const status = statusMap[state]
+
+  const isBusy = state === 'starting' || state === 'measuring' || isCalibrating
+  const busyMessage =
+    state === 'starting' ? 'Запуск...' : state === 'measuring' ? 'Измерение...' : 'Калибровка...'
+
   const { data: chartData, keys: chartKeys } = useMemo(
     () => buildChartData(measurements),
     [measurements]
@@ -145,18 +157,26 @@ export const MeasureModule: FC = () => {
   )
 
   useEffect(() => {
-    const unsubState = window.spotreadApi.onState((nextState) => {
+    const unsubState = window.spotreadApi.onState((nextState): void => {
       setState(nextState as SpotreadState)
+      if (
+        nextState === 'readyToMeasure' ||
+        nextState === 'error' ||
+        nextState === 'exited' ||
+        nextState === 'idle'
+      ) {
+        setIsCalibrating(false)
+      }
     })
 
-    const unsubRaw = window.spotreadApi.onRaw((chunk) => {
+    const unsubRaw = window.spotreadApi.onRaw((chunk): void => {
       setRawLog((prev) => {
         const next = `${prev}${chunk}`
         return next.length > 30000 ? next.slice(next.length - 30000) : next
       })
     })
 
-    const unsubMeasurement = window.spotreadApi.onMeasurement((measurement) => {
+    const unsubMeasurement = window.spotreadApi.onMeasurement((measurement): void => {
       const name = `Измерение ${++measureCountRef.current}`
       const stamped: Measurement = {
         ...(measurement as Omit<Measurement, 'name' | 'timestamp'>),
@@ -167,14 +187,14 @@ export const MeasureModule: FC = () => {
       setMeasurements((prev) => [...prev, stamped])
     })
 
-    return () => {
+    return (): void => {
       unsubState()
       unsubRaw()
       unsubMeasurement()
     }
   }, [])
 
-  useEffect(() => {
+  useEffect((): void => {
     if (!autoScroll || !logRef.current) return
     logRef.current.scrollTop = logRef.current.scrollHeight
   }, [rawLog, autoScroll])
@@ -196,7 +216,7 @@ export const MeasureModule: FC = () => {
       }
     }
     window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    return (): void => window.removeEventListener('keydown', onKeyDown)
   }, [state, argyllBinDir, instrumentPort])
 
   useEffect(() => {
@@ -204,7 +224,7 @@ export const MeasureModule: FC = () => {
     const close = (): void => setLegendMenu(null)
     window.addEventListener('click', close)
     window.addEventListener('scroll', close, true)
-    return () => {
+    return (): void => {
       window.removeEventListener('click', close)
       window.removeEventListener('scroll', close, true)
     }
@@ -233,9 +253,11 @@ export const MeasureModule: FC = () => {
   }
 
   const handleCalibrate = async (): Promise<void> => {
+    setIsCalibrating(true)
     try {
       await window.spotreadApi.calibrate()
     } catch (error) {
+      setIsCalibrating(false)
       setRawLog((prev) => `${prev}\n[UI] Ошибка калибровки: ${String(error)}\n`)
     }
   }
@@ -245,22 +267,6 @@ export const MeasureModule: FC = () => {
       await window.spotreadApi.measure()
     } catch (error) {
       setRawLog((prev) => `${prev}\n[UI] Ошибка измерения: ${String(error)}\n`)
-    }
-  }
-
-  const handleSaveSpectrum = async (): Promise<void> => {
-    try {
-      await window.spotreadApi.saveSpectrum()
-    } catch (error) {
-      setRawLog((prev) => `${prev}\n[UI] Ошибка сохранения спектра: ${String(error)}\n`)
-    }
-  }
-
-  const handleSetReference = async (): Promise<void> => {
-    try {
-      await window.spotreadApi.setReference()
-    } catch (error) {
-      setRawLog((prev) => `${prev}\n[UI] Ошибка установки reference: ${String(error)}\n`)
     }
   }
 
@@ -292,245 +298,232 @@ export const MeasureModule: FC = () => {
         subtitle="Измерение одной точки через X-Rite i1 Pro и ArgyllCMS"
       />
 
-      <div className="grid gap-6 xl:grid-cols-[400px_minmax(0,1fr)]">
-        {/* Левая колонка */}
-        <div className="space-y-6">
-          <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h2 className="text-base font-semibold text-zinc-900">Сессия</h2>
-                <p className="mt-1 text-sm leading-6 text-zinc-600">{status.description}</p>
-              </div>
-              <span
-                className={[
-                  'inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset',
-                  status.className
-                ].join(' ')}
-              >
-                {status.label}
-              </span>
-            </div>
-
-            <div className="mt-5 space-y-4">
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-zinc-800">
-                  Путь к папке bin ArgyllCMS
-                </span>
-                <input
-                  value={argyllBinDir}
-                  onChange={(e) => setArgyllBinDir(e.target.value)}
-                  placeholder="C:\Argyll_V3.5.0_64\bin"
-                  className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-400 focus:ring-4 focus:ring-zinc-100"
-                />
-              </label>
-
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-zinc-800">
-                  Номер прибора
-                </span>
-                <input
-                  type="number"
-                  min={1}
-                  value={instrumentPort}
-                  onChange={(e) => setInstrumentPort(Number(e.target.value) || 1)}
-                  className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-400 focus:ring-4 focus:ring-zinc-100"
-                />
-              </label>
-            </div>
-
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <button
-                onClick={handleStart}
-                className="rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800"
-              >
-                Запустить
-              </button>
-              <button
-                onClick={handleStop}
-                className="rounded-xl border border-zinc-300 bg-white px-4 py-2.5 text-sm font-medium text-zinc-800 transition hover:bg-zinc-50"
-              >
-                Остановить
-              </button>
-              <button
-                onClick={handleCalibrate}
-                className="rounded-xl border border-zinc-300 bg-white px-4 py-2.5 text-sm font-medium text-zinc-800 transition hover:bg-zinc-50"
-              >
-                Калибровать
-              </button>
-              <button
-                onClick={handleMeasure}
-                className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-500"
-              >
-                Измерить
-              </button>
-              <button
-                onClick={handleSetReference}
-                className="rounded-xl border border-zinc-300 bg-white px-4 py-2.5 text-sm font-medium text-zinc-800 transition hover:bg-zinc-50"
-              >
-                Set reference
-              </button>
-              <button
-                onClick={handleSaveSpectrum}
-                className="rounded-xl border border-zinc-300 bg-white px-4 py-2.5 text-sm font-medium text-zinc-800 transition hover:bg-zinc-50"
-              >
-                Сохранить спектр
-              </button>
-            </div>
-
-            <div className="mt-4 rounded-xl bg-zinc-50 p-4">
-              <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-                Горячие клавиши
-              </p>
-              <p className="mt-2 text-sm leading-6 text-zinc-700">
-                <span className="font-medium">Space</span> — измерить,{' '}
-                <span className="font-medium">K</span> — калибровать,{' '}
-                <span className="font-medium">Esc</span> — остановить.
-              </p>
-            </div>
+      {/* Основной контент с оверлеем загрузки */}
+      <div className="relative">
+        {isBusy && (
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center rounded-2xl bg-zinc-50/85 backdrop-blur-[2px]">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-zinc-200 border-t-zinc-700" />
+            <p className="mt-3 text-sm font-medium text-zinc-700">{busyMessage}</p>
           </div>
+        )}
 
-          {/* Последний результат */}
-          <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-            <h2 className="text-base font-semibold text-zinc-900">Последний результат</h2>
-            <p className="mt-1 text-sm text-zinc-600">
-              {lastMeasurement
-                ? `${lastMeasurement.name} · ${lastMeasurement.timestamp}`
-                : 'Пока нет измерений'}
-            </p>
-
-            <div className="mt-4 grid gap-3">
-              <div className="rounded-xl border border-zinc-200 p-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">XYZ</p>
-                <p className="mt-2 font-mono text-sm text-zinc-900">
-                  {formatTriple(lastMeasurement?.xyz)}
-                </p>
-              </div>
-              <div className="rounded-xl border border-zinc-200 p-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Lab</p>
-                <p className="mt-2 font-mono text-sm text-zinc-900">
-                  {formatTriple(lastMeasurement?.lab)}
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Правая колонка */}
-        <div className="space-y-6">
-          {/* График спектра */}
-          <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-base font-semibold text-zinc-900">Спектр</h2>
-                <p className="mt-1 text-sm text-zinc-600">
-                  {measurementsWithSpectrum.length
-                    ? `${measurementsWithSpectrum.length} измерений · правый клик на метке — добавить в таблицу`
-                    : 'Нет данных'}
-                </p>
-              </div>
-              {measurementsWithSpectrum.length > 0 && (
-                <button
-                  onClick={() => setMeasurements([])}
-                  className="rounded-xl border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50"
+        <div className="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
+          {/* Левая колонка — сессия */}
+          <div>
+            <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-semibold text-zinc-900">Сессия</h2>
+                  <p className="mt-1 text-sm leading-6 text-zinc-600">{status.description}</p>
+                </div>
+                <span
+                  className={[
+                    'inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset',
+                    status.className
+                  ].join(' ')}
                 >
-                  Очистить
+                  {status.label}
+                </span>
+              </div>
+
+              <div className="mt-5 space-y-4">
+                <label className="block">
+                  <span className="mb-1.5 block text-sm font-medium text-zinc-800">
+                    Путь к папке bin ArgyllCMS
+                  </span>
+                  <input
+                    value={argyllBinDir}
+                    onChange={(e): void => setArgyllBinDir(e.target.value)}
+                    placeholder="C:\Argyll_V3.5.0_64\bin"
+                    className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-400 focus:ring-4 focus:ring-zinc-100"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="mb-1.5 block text-sm font-medium text-zinc-800">
+                    Номер прибора
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={instrumentPort}
+                    onChange={(e): void => setInstrumentPort(Number(e.target.value) || 1)}
+                    className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-zinc-400 focus:ring-4 focus:ring-zinc-100"
+                  />
+                </label>
+              </div>
+
+              <div className="mt-5 space-y-3">
+                <button
+                  onClick={(): Promise<void> => handleStart()}
+                  className="w-full rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800"
+                >
+                  Запустить
                 </button>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={(): Promise<void> => handleCalibrate()}
+                    className="rounded-xl border border-zinc-300 bg-white px-4 py-2.5 text-sm font-medium text-zinc-800 transition hover:bg-zinc-50"
+                  >
+                    Калибровать
+                  </button>
+                  <button
+                    onClick={(): Promise<void> => handleMeasure()}
+                    className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-500"
+                  >
+                    Измерить
+                  </button>
+                </div>
+              </div>
+
+              {/* Подсказка горячих клавиш */}
+              <div className="mt-4 flex justify-end">
+                <div className="group relative">
+                  <button
+                    type="button"
+                    className="flex h-5 w-5 items-center justify-center rounded-full border border-zinc-300 bg-white text-xs font-medium text-zinc-400 transition hover:border-zinc-400 hover:text-zinc-600"
+                  >
+                    ?
+                  </button>
+                  <div className="absolute bottom-7 right-0 z-20 hidden w-44 rounded-xl border border-zinc-200 bg-white p-3 shadow-lg group-hover:block">
+                    <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+                      Горячие клавиши
+                    </p>
+                    <div className="space-y-1.5">
+                      {HOTKEYS.map(({ key, label }) => (
+                        <div key={key} className="flex items-center gap-2">
+                          <span className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-700">
+                            {key}
+                          </span>
+                          <span className="text-xs text-zinc-600">{label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Правая колонка — спектр + результат */}
+          <div className="space-y-6">
+            {/* График */}
+            <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-semibold text-zinc-900">Спектр</h2>
+                  <p className="mt-1 text-sm text-zinc-600">
+                    {measurementsWithSpectrum.length
+                      ? `${measurementsWithSpectrum.length} изм. · ПКМ на метке — добавить в таблицу`
+                      : 'Нет данных'}
+                  </p>
+                </div>
+                {measurementsWithSpectrum.length > 0 && (
+                  <button
+                    onClick={(): void => setMeasurements([])}
+                    className="rounded-xl border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50"
+                  >
+                    Очистить
+                  </button>
+                )}
+              </div>
+
+              {measurementsWithSpectrum.length > 0 && (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {measurementsWithSpectrum.map((m, i) => (
+                    <button
+                      key={i}
+                      onContextMenu={(e): void => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        setLegendMenu({ x: e.clientX, y: e.clientY, index: i })
+                      }}
+                      className="flex select-none items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100"
+                    >
+                      <span
+                        className="h-2 w-2 shrink-0 rounded-full"
+                        style={{ background: SERIES_COLORS[i % SERIES_COLORS.length] }}
+                      />
+                      {m.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {chartData.length ? (
+                <div className="mt-4">
+                  <ResponsiveContainer width="100%" height={320}>
+                    <LineChart data={chartData} margin={{ top: 4, right: 16, bottom: 4, left: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" />
+                      <XAxis
+                        dataKey="wavelength"
+                        tickLine={false}
+                        tick={{ fontSize: 11, fill: '#71717a' }}
+                        label={{
+                          value: 'нм',
+                          position: 'insideRight',
+                          offset: -4,
+                          fontSize: 11,
+                          fill: '#71717a'
+                        }}
+                      />
+                      <YAxis tickLine={false} tick={{ fontSize: 11, fill: '#71717a' }} width={70} />
+                      <Tooltip
+                        contentStyle={{ fontSize: 12 }}
+                        formatter={(value, name): [string | number, string] => [
+                          typeof value === 'number' ? value.toFixed(6) : value,
+                          measurementsWithSpectrum[Number(name)]?.name ?? `#${Number(name) + 1}`
+                        ]}
+                        labelFormatter={(label): string => `${label} нм`}
+                      />
+                      {chartKeys.map((key, i) => (
+                        <Line
+                          key={key}
+                          type="monotone"
+                          dataKey={key}
+                          stroke={SERIES_COLORS[i % SERIES_COLORS.length]}
+                          strokeWidth={1.5}
+                          dot={false}
+                          isAnimationActive={false}
+                        />
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="mt-5 rounded-xl border border-dashed border-zinc-300 p-8 text-center text-sm text-zinc-500">
+                  Запустите сессию, выполните калибровку и сделайте измерение.
+                </div>
               )}
             </div>
 
-            {/* Легенда с именами точек */}
-            {measurementsWithSpectrum.length > 0 && (
-              <div className="mt-4 flex flex-wrap gap-2">
-                {measurementsWithSpectrum.map((m, i) => (
-                  <button
-                    key={i}
-                    onContextMenu={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      setLegendMenu({ x: e.clientX, y: e.clientY, index: i })
-                    }}
-                    className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100 select-none"
-                  >
-                    <span
-                      className="h-2 w-2 shrink-0 rounded-full"
-                      style={{ background: SERIES_COLORS[i % SERIES_COLORS.length] }}
-                    />
-                    {m.name}
-                  </button>
-                ))}
+            {/* Последний результат — горизонтально */}
+            <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+              <div className="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <h2 className="text-base font-semibold text-zinc-900">Последний результат</h2>
+                {lastMeasurement ? (
+                  <span className="text-sm text-zinc-500">
+                    {lastMeasurement.name} · {lastMeasurement.timestamp}
+                  </span>
+                ) : (
+                  <span className="text-sm text-zinc-400">Пока нет измерений</span>
+                )}
               </div>
-            )}
-
-            {chartData.length ? (
-              <div className="mt-4">
-                <ResponsiveContainer width="100%" height={340}>
-                  <LineChart data={chartData} margin={{ top: 4, right: 16, bottom: 4, left: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" />
-                    <XAxis
-                      dataKey="wavelength"
-                      tickLine={false}
-                      tick={{ fontSize: 11, fill: '#71717a' }}
-                      label={{
-                        value: 'нм',
-                        position: 'insideRight',
-                        offset: -4,
-                        fontSize: 11,
-                        fill: '#71717a'
-                      }}
-                    />
-                    <YAxis tickLine={false} tick={{ fontSize: 11, fill: '#71717a' }} width={70} />
-                    <Tooltip
-                      contentStyle={{ fontSize: 12 }}
-                      formatter={(value, name) => [
-                        typeof value === 'number' ? value.toFixed(6) : value,
-                        measurementsWithSpectrum[Number(name)]?.name ?? `#${Number(name) + 1}`
-                      ]}
-                      labelFormatter={(label) => `${label} нм`}
-                    />
-                    {chartKeys.map((key, i) => (
-                      <Line
-                        key={key}
-                        type="monotone"
-                        dataKey={key}
-                        stroke={SERIES_COLORS[i % SERIES_COLORS.length]}
-                        strokeWidth={1.5}
-                        dot={false}
-                        isAnimationActive={false}
-                      />
-                    ))}
-                  </LineChart>
-                </ResponsiveContainer>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-xl border border-zinc-200 p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">XYZ</p>
+                  <p className="mt-2 font-mono text-sm text-zinc-900">
+                    {formatTriple(lastMeasurement?.xyz)}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-zinc-200 p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Lab</p>
+                  <p className="mt-2 font-mono text-sm text-zinc-900">
+                    {formatTriple(lastMeasurement?.lab)}
+                  </p>
+                </div>
               </div>
-            ) : (
-              <div className="mt-5 rounded-xl border border-dashed border-zinc-300 p-8 text-center text-sm text-zinc-500">
-                Запустите сессию, выполните калибровку и сделайте измерение.
-              </div>
-            )}
-          </div>
-
-          {/* Лог */}
-          <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-base font-semibold text-zinc-900">Лог spotread</h2>
-                <p className="mt-1 text-sm text-zinc-600">Сырой вывод процесса</p>
-              </div>
-              <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
-                <input
-                  type="checkbox"
-                  checked={autoScroll}
-                  onChange={(e) => setAutoScroll(e.target.checked)}
-                  className="h-4 w-4 rounded border-zinc-300"
-                />
-                Автоскролл
-              </label>
             </div>
-            <pre
-              ref={logRef}
-              className="mt-5 max-h-[360px] overflow-auto rounded-xl bg-zinc-950 p-4 font-mono text-xs leading-6 text-zinc-100"
-            >
-              {rawLog || 'Лог пуст'}
-            </pre>
           </div>
         </div>
       </div>
@@ -538,16 +531,60 @@ export const MeasureModule: FC = () => {
       {/* Общая таблица */}
       <SharedTable />
 
+      {/* Лог — внизу, скрытый по умолчанию */}
+      <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm">
+        <button
+          type="button"
+          onClick={(): void => setIsLogOpen((v) => !v)}
+          className="flex w-full items-center justify-between px-6 py-4 text-left"
+        >
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-semibold text-zinc-900">Лог spotread</span>
+            <span className="text-xs text-zinc-400">сырой вывод процесса</span>
+          </div>
+          <ChevronDown
+            className={[
+              'h-4 w-4 text-zinc-400 transition-transform duration-200',
+              isLogOpen ? 'rotate-180' : ''
+            ].join(' ')}
+          />
+        </button>
+
+        {isLogOpen && (
+          <div className="px-6 pb-6">
+            <div className="mb-3 flex justify-end">
+              <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
+                <input
+                  type="checkbox"
+                  checked={autoScroll}
+                  onChange={(e): void => setAutoScroll(e.target.checked)}
+                  className="h-4 w-4 rounded border-zinc-300"
+                />
+                Автоскролл
+              </label>
+            </div>
+            <pre
+              ref={logRef}
+              className="max-h-[360px] overflow-auto rounded-xl bg-zinc-950 p-4 font-mono text-xs leading-6 text-zinc-100"
+            >
+              {rawLog || 'Лог пуст'}
+            </pre>
+          </div>
+        )}
+      </div>
+
       {/* Контекстное меню легенды */}
       {legendMenu && (
         <div
           className="fixed z-50 min-w-44 rounded-lg border border-zinc-200 bg-white p-1 shadow-lg"
           style={{ left: legendMenu.x, top: legendMenu.y }}
-          onClick={(e) => e.stopPropagation()}
+          onClick={(e): void => {
+            e.stopPropagation()
+          }}
         >
           <button
             type="button"
-            onClick={() => handleAddToTable(legendMenu.index)}
+            onClick={(): void => handleAddToTable(legendMenu.index)}
             className="w-full rounded-md px-3 py-2 text-left text-sm text-zinc-700 transition hover:bg-zinc-100"
           >
             Добавить в таблицу
@@ -555,7 +592,7 @@ export const MeasureModule: FC = () => {
           <div className="my-1 border-t border-zinc-100" />
           <button
             type="button"
-            onClick={() => handleRemoveFromChart(legendMenu.index)}
+            onClick={(): void => handleRemoveFromChart(legendMenu.index)}
             className="w-full rounded-md px-3 py-2 text-left text-sm text-rose-600 transition hover:bg-rose-50"
           >
             Удалить с графика

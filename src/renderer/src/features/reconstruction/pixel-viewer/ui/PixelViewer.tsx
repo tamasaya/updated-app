@@ -1776,13 +1776,31 @@ export function PixelViewer({ npyPath }: Props): JSX.Element {
                       />
                     </td>
                     <td className="border-b border-zinc-100 px-3 py-2 align-middle">
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteRow(row.id)}
-                        className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-[11px] text-zinc-700 transition hover:bg-zinc-100"
-                      >
-                        Удалить
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            addToSharedTable({
+                              name: row.sourceLabel,
+                              source: 'reconstruction',
+                              color: row.sourceColor,
+                              spectrum: row.values,
+                              wavelengthStart: WAVELENGTH_START_NM,
+                              wavelengthEnd: WAVELENGTH_END_NM
+                            })
+                          }
+                          className="rounded-md border border-violet-200 bg-white px-2 py-1 text-[11px] text-violet-700 transition hover:bg-violet-50"
+                        >
+                          → Общая
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteRow(row.id)}
+                          className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-[11px] text-zinc-700 transition hover:bg-zinc-100"
+                        >
+                          Удалить
+                        </button>
+                      </div>
                     </td>
                     {wavelengthColumns.map((_, index) => (
                       <td
